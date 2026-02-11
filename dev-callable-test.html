@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>YARUYO Callable Test</title>
+</head>
+
+<body>
+    <h1>YARUYO Callable Test</h1>
+
+    <button id="signin">匿名ログイン（Auth Emulator）</button>
+    <button id="createFamily">createFamily</button>
+    <button id="joinParent">joinFamilyByCode（親コード）</button>
+    <button id="joinChild">joinFamilyByCode（子コード）</button>
+    <button id="declarePlan">declarePlan</button>
+    <button id="declarePlanRounded">declarePlan（startAtあり）</button>
+    <button id="recordPlan">recordPlan</button>
+
+
+
+
+    <pre id="out"></pre>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+        import { getAuth, signInAnonymously, connectAuthEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+        import { getFunctions, httpsCallable, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-functions.js";
+
+        const out = document.getElementById("out");
+        const log = (...args) =>
+            out.textContent += args.map(a => typeof a === "string" ? a : JSON.stringify(a, null, 2)).join(" ") + "\n";
+
+        // ★ここを Firebase コンソールの「Web アプリ設定」からコピペ
+        const firebaseConfig = {
+            apiKey: "AIzaSyAAtKF1zJnYtKVq5pWIaDb6VKtVbhFd_HA",
+            authDomain: "yaruyo-dc015.firebaseapp.com",
+            projectId: "demo-yaruyo",
+            storageBucket: "yaruyo-dc015.firebasestorage.app",
+            messagingSenderId: "1020751568402",
+            appId: "1:1020751568402:web:1cf789ca0847772be882cb",
+            measurementId: "G-R8WN04Z2VP"
+        };
+
+        const app = initializeApp(firebaseConfig);
+
+        // Auth Emulator
+        const auth = getAuth(app);
+        connectAuthEmulator(auth, "http://127.0.0.1:9099");
+
+        // Functions Emulator（ログの region に合わせる）
+        const functions = getFunctions(app, "asia-northeast1");
+        connectFunctionsEmulator(functions, "127.0.0.1", 5001);
+
+        document.getElementById("signin").onclick = async () => {
+            const r = await signInAnonymously(auth);
+            log("signed in:", { uid: r.user.uid });
+        };
+
+        document.getElementById("createFamily").onclick = async () => {
+            const fn = httpsCallable(functions, "createFamily");
+            const res = await fn({ displayName: "dev-admin" });
+            log("createFamily result:", res.data);
+        };
+
+        document.getElementById("joinParent").onclick = async () => {
+            const fn = httpsCallable(functions, "joinFamilyByCode");
+            const res = await fn({ code: "729187", displayName: "dev-parent-join" });
+            log("joinFamilyByCode(parent) result:", res.data);
+        };
+
+        document.getElementById("joinChild").onclick = async () => {
+            const fn = httpsCallable(functions, "joinFamilyByCode");
+            const res = await fn({ code: "405836", displayName: "dev-child" });
+            log("joinFamilyByCode(child) result:", res.data);
+        };
+
+        document.getElementById("declarePlan").onclick = async () => {
+            log("declarePlan clicked");
+            try {
+                const fn = httpsCallable(functions, "declarePlan");
+                const res = await fn({
+                    subjects: ["算数プリント2枚やる"],
+                    startAt: null,
+                    amountType: null,
+                    amountValue: null,
+                    contentMemo: "親の宣言テスト"
+                });
+                log("declarePlan result:", res.data);
+                window.__lastPlanId = res.data?.planId;
+                log("saved planId:", window.__lastPlanId);
+            } catch (e) {
+                console.error(e);
+                log("declarePlan ERROR:", { message: e?.message, code: e?.code, details: e?.details });
+            }
+        };
+
+        document.getElementById("declarePlanRounded").onclick = async () => {
+            log("declarePlanRounded clicked");
+            try {
+                const fn = httpsCallable(functions, "declarePlan");
+                const res = await fn({
+                    subjects: ["開始時刻丸めテスト"],
+                    startAt: new Date().toISOString(),  // ★これを丸める
+                    amountType: "time",
+                    amountValue: 30,
+                    contentMemo: "roundTo30MinutesJst の確認"
+                });
+                log("declarePlanRounded result:", res.data);
+            } catch (e) {
+                console.error(e);
+                log("declarePlanRounded ERROR:", { message: e?.message, code: e?.code, details: e?.details });
+            }
+        };
+
+
+        document.getElementById("recordPlan").onclick = async () => {
+            log("recordPlan clicked");
+            try {
+                const planId = window.__lastPlanId;
+                if (!planId) throw new Error("planId is missing. declarePlan first.");
+
+                const fn = httpsCallable(functions, "recordPlan");
+                const res = await fn({
+                    planId,
+                    result: "as_planned"
+                });
+
+                log("recordPlan result:", res.data);
+            } catch (e) {
+                console.error(e);
+                log("recordPlan ERROR:", { message: e?.message, code: e?.code, details: e?.details });
+            }
+        };
+
+
+
+    </script>
+</body>
+
+</html>

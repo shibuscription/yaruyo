@@ -1,0 +1,126 @@
+import { onCall } from "firebase-functions/v2/https";
+import { ensureUserDoc } from "../lib/auth.js";
+import { eventDisplayName } from "../lib/domain.js";
+import { assertAuth, assertCondition, toInternalError } from "../lib/errors.js";
+import { db, SERVER_TIMESTAMP } from "../lib/firestore.js";
+import { notifyRecipients } from "../lib/notification.js";
+function isValidResult(result) {
+    return result === "light" || result === "as_planned" || result === "extra";
+}
+export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) => {
+    try {
+        const uid = assertAuth(request.auth?.uid);
+        const body = request.data;
+        assertCondition(typeof body?.planId === "string" && body.planId.length > 0, "invalid-argument", "planId is required.");
+        assertCondition(isValidResult(body?.result), "invalid-argument", "result is invalid.");
+        assertCondition(body?.memo == null || typeof body.memo === "string", "invalid-argument", "memo must be a string or null.");
+        const trimmedMemo = typeof body?.memo === "string" ? body.memo.trim() : "";
+        assertCondition(trimmedMemo.length <= 200, "invalid-argument", "memo must be <= 200 chars.");
+        const normalizedMemo = trimmedMemo.length > 0 ? trimmedMemo : null;
+        await ensureUserDoc(uid);
+        const planRef = db.doc(`plans/${body.planId}`);
+        const recordRef = db.doc(`records/${body.planId}`);
+        const eventId = `plan_recorded_${body.planId}`;
+        const eventRef = db.doc(`events/${eventId}`);
+        const txResult = await db.runTransaction(async (tx) => {
+            const userRef = db.doc(`users/${uid}`);
+            const [planSnap, recordSnap, userSnap] = await Promise.all([tx.get(planRef), tx.get(recordRef), tx.get(userRef)]);
+            assertCondition(planSnap.exists, "not-found", "Plan not found.");
+            assertCondition(userSnap.exists, "failed-precondition", "User profile is missing.");
+            const plan = planSnap.data();
+            const userFamilyId = userSnap.data()?.familyId ?? null;
+            assertCondition(plan.userId === uid, "failed-precondition", "You can only record your own plan.");
+            assertCondition(userFamilyId === plan.familyId, "failed-precondition", "Family mismatch.");
+            if (recordSnap.exists) {
+                const recordedAt = plan.recordedAt?.toDate?.()?.toISOString?.() ?? new Date().toISOString();
+                const existingMemo = recordSnap.data()?.memo ?? null;
+                return {
+                    ok: true,
+                    planId: body.planId,
+                    recordId: body.planId,
+                    eventId,
+                    recordedAt,
+                    familyId: plan.familyId,
+                    memo: existingMemo,
+                };
+            }
+            assertCondition(plan.status === "declared", "failed-precondition", "Plan is not recordable.");
+            tx.set(recordRef, {
+                familyId: plan.familyId,
+                userId: uid,
+                planId: body.planId,
+                result: body.result,
+                memo: normalizedMemo,
+                createdAt: SERVER_TIMESTAMP,
+            });
+            tx.update(planRef, {
+                status: "recorded",
+                recordedAt: SERVER_TIMESTAMP,
+                updatedAt: SERVER_TIMESTAMP,
+            });
+            const actorDisplayName = eventDisplayName(userSnap.data(), uid);
+            tx.set(eventRef, {
+                familyId: plan.familyId,
+                actorUserId: uid,
+                type: "plan_recorded",
+                resourceId: body.planId,
+                payloadForMessage: {
+                    actorDisplayName,
+                    subjects: Array.isArray(plan.subjects) ? plan.subjects : [],
+                    result: body.result,
+                },
+                createdAt: SERVER_TIMESTAMP,
+                updatedAt: SERVER_TIMESTAMP,
+            });
+            return {
+                ok: true,
+                planId: body.planId,
+                recordId: body.planId,
+                eventId,
+                recordedAt: new Date().toISOString(),
+                familyId: plan.familyId,
+                memo: normalizedMemo,
+            };
+        });
+        const membersSnap = await db
+            .collection(`families/${txResult.familyId}/members`)
+            .where("status", "==", "active")
+            .get();
+        const recipients = [];
+        await Promise.all(membersSnap.docs.map(async (memberDoc) => {
+            const recipientId = memberDoc.id;
+            if (recipientId === uid) {
+                return;
+            }
+            const userSnap = await db.doc(`users/${recipientId}`).get();
+            if (userSnap.data()?.notifyActivityRecord === true) {
+                recipients.push(recipientId);
+            }
+        }));
+        const eventSnap = await db.doc(`events/${txResult.eventId}`).get();
+        const payload = (eventSnap.data()?.payloadForMessage ?? {});
+        const actorDisplayName = typeof payload.actorDisplayName === "string" ? payload.actorDisplayName : uid;
+        const subjects = Array.isArray(payload.subjects) ? payload.subjects : [];
+        const subjectLabel = subjects.length > 0 ? subjects.join(", ") : "study";
+        const resultLabel = body.result === "light" ? "light" : body.result === "as_planned" ? "as planned" : "extra";
+        await notifyRecipients({
+            familyId: txResult.familyId,
+            eventId: txResult.eventId,
+            type: "activity_record",
+            actorUserId: uid,
+            recipientIds: recipients,
+            messageBuilder: () => `${actorDisplayName} completed: ${subjectLabel} (${resultLabel})`,
+        });
+        return {
+            ok: true,
+            planId: txResult.planId,
+            recordId: txResult.recordId,
+            eventId: txResult.eventId,
+            recordedAt: txResult.recordedAt,
+            memo: txResult.memo,
+        };
+    }
+    catch (error) {
+        throw toInternalError(error);
+    }
+});

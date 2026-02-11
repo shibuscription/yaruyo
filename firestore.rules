@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function memberDoc(familyId, uid) {
+      return /databases/$(database)/documents/families/$(familyId)/members/$(uid);
+    }
+
+    function isMember(familyId) {
+      return signedIn() && exists(memberDoc(familyId, request.auth.uid));
+    }
+
+    function myRole(familyId) {
+      return get(memberDoc(familyId, request.auth.uid)).data.role;
+    }
+
+    function isParent(familyId) {
+      return isMember(familyId) && myRole(familyId) == "parent";
+    }
+
+    function canReadScoped(familyId, ownerUserId) {
+      return isParent(familyId) || (isMember(familyId) && isSelf(ownerUserId));
+    }
+
+    match /users/{userId} {
+      allow read: if isSelf(userId);
+      allow create: if false;
+      allow update: if isSelf(userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "appDisplayName",
+          "notifyActivityPlan",
+          "notifyActivityRecord",
+          "updatedAt"
+        ]);
+      allow delete: if false;
+    }
+
+    match /families/{familyId} {
+      allow read: if isMember(familyId);
+      allow create, update, delete: if false;
+
+      match /members/{userId} {
+        allow read: if isMember(familyId);
+        allow create, update, delete: if false;
+      }
+
+      match /inviteCodes/{code} {
+        allow read: if isMember(familyId);
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /plans/{planId} {
+      allow read: if canReadScoped(resource.data.familyId, resource.data.userId);
+      allow create: if false;
+      allow update: if isSelf(resource.data.userId)
+        && isMember(resource.data.familyId)
+        && resource.data.status == "declared"
+        && request.resource.data.status == "cancelled"
+        && request.resource.data.cancelledAt is timestamp
+        && request.resource.data.recordedAt == resource.data.recordedAt
+        && request.resource.data.familyId == resource.data.familyId
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "status",
+          "cancelledAt",
+          "updatedAt"
+        ]);
+      allow delete: if false;
+    }
+
+    match /records/{planId} {
+      allow read: if canReadScoped(resource.data.familyId, resource.data.userId);
+      allow create: if false;
+      allow update, delete: if false;
+    }
+
+    match /events/{eventId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /notificationLogs/{logId} {
+      allow read, create, update, delete: if false;
+    }
+  }
+}
