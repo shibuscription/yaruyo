@@ -164,6 +164,16 @@ firebase deploy --only firestore:indexes
 
 ※ Functions の環境変数は `functions/.env`（ローカル）/ `functions/.env.<alias>`（本番）を使用（`functions.config()` は不使用）。
 
+### LINEリッチメニュー作成
+
+環境変数を設定して実行:
+
+`LINE_CHANNEL_ACCESS_TOKEN=...`
+`LIFF_ID=2009111070-71hr5ID2`
+`RICHMENU_IMAGE_PATH=...`
+
+`node scripts/createRichMenu.js`
+
 ------------------------------------------------------------------------
 
 ## 💰 コスト注意
