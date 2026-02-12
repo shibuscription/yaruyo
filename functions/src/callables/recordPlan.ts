@@ -120,9 +120,6 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
     await Promise.all(
       membersSnap.docs.map(async (memberDoc) => {
         const recipientId = memberDoc.id;
-        if (recipientId === uid) {
-          return;
-        }
         const userSnap = await db.doc(`users/${recipientId}`).get();
         if (userSnap.data()?.notifyActivityRecord === true) {
           recipients.push(recipientId);
@@ -134,8 +131,17 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
     const payload = (eventSnap.data()?.payloadForMessage ?? {}) as Record<string, unknown>;
     const actorDisplayName = typeof payload.actorDisplayName === "string" ? payload.actorDisplayName : uid;
     const subjects = Array.isArray(payload.subjects) ? (payload.subjects as string[]) : [];
-    const subjectLabel = subjects.length > 0 ? subjects.join(", ") : "study";
-    const resultLabel = body.result === "light" ? "light" : body.result === "as_planned" ? "as planned" : "extra";
+    const subjectLabels: Record<string, string> = {
+      en: "英語",
+      math: "数学",
+      jp: "国語",
+      sci: "理科",
+      soc: "社会",
+      other: "その他",
+    };
+    const subjectLabel = subjects.length > 0 ? subjects.map((subject) => subjectLabels[subject] ?? subject).join("・") : "勉強";
+    const resultJa =
+      body.result === "light" ? "軽めに" : body.result === "as_planned" ? "予定どおり" : "多めに";
 
     await notifyRecipients({
       familyId: txResult.familyId,
@@ -143,7 +149,7 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
       type: "activity_record",
       actorUserId: uid,
       recipientIds: recipients,
-      messageBuilder: () => `${actorDisplayName} completed: ${subjectLabel} (${resultLabel})`,
+      messageBuilder: () => `${actorDisplayName}が「${subjectLabel}」をやったよ！🏆\n（${resultJa}）`,
     });
 
     return {

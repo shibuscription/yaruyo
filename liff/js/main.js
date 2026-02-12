@@ -1,5 +1,6 @@
 import {
   auth,
+  cancelPlan,
   createFamily,
   declarePlan,
   ensureAnonymousAuth,
@@ -8,14 +9,17 @@ import {
   joinFamilyByCode,
   listFamilyMembers,
   listInviteCodes,
+  listOpenPlansPage,
   listPlans,
+  listRecordsPage,
   listRecords,
   recordPlan,
   signInWithLineIdToken,
   subscribeMyUser,
   updateMySettings,
-  upsertMyUserProfile,
+  upsertMyLineProfile,
   waitAuth,
+  writeDebugLog,
 } from "./api.js";
 import { state } from "./state.js";
 import { subjectLabel } from "./subjectDict.js";
@@ -32,9 +36,13 @@ function normalizeLiffUrl() {
 const shouldBoot = normalizeLiffUrl();
 const root = document.getElementById("app-root");
 const params = new URLSearchParams(location.search);
-const view = ["declare", "record", "stats", "settings"].includes(params.get("view")) ? params.get("view") : null;
+const rawView = params.get("view");
+const mappedView = rawView === "yaruyo" ? "declare" : rawView;
+const view = ["declare", "record", "stats", "settings", "plans"].includes(mappedView) ? mappedView : null;
+const SETTINGS_DEBUG = params.get("debug") === "1";
 const LIFF_ID = "2009111070-71hr5ID2";
 const ENABLE_DEBUG = false;
+const ENABLE_DEBUG_LOG_UPLOAD = false;
 
 function getHashParam(key) {
   const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
@@ -87,6 +95,109 @@ let settingsModalState = null;
 let webMode = false;
 let debugPanelEl = null;
 const globalState = window;
+let currentBootPhase = "BOOT";
+let loadingBannerEl = null;
+let globalErrorHandlersRegistered = false;
+
+function extractErrorMeta(error) {
+  if (error instanceof Error) {
+    return {
+      message: error.message || String(error),
+      stack: error.stack || "(no stack)",
+    };
+  }
+  if (typeof error === "object" && error && "message" in error) {
+    return {
+      message: String(error.message),
+      stack: typeof error.stack === "string" ? error.stack : "(no stack)",
+    };
+  }
+  return {
+    message: String(error),
+    stack: "(no stack)",
+  };
+}
+
+function phaseLog(phase, detail = undefined) {
+  currentBootPhase = phase;
+  if (detail !== undefined) console.info(`[BOOT] ${phase}`, detail);
+  else console.info(`[BOOT] ${phase}`);
+}
+
+async function uploadDebugLogIfEnabled(type, payload = {}) {
+  if (!ENABLE_DEBUG_LOG_UPLOAD) return;
+  try {
+    const uid = auth?.currentUser?.uid ?? "unknown";
+    await writeDebugLog(uid, {
+      type,
+      phase: currentBootPhase,
+      href: location.href,
+      payload,
+    });
+  } catch (error) {
+    console.warn("debug log upload failed", error);
+  }
+}
+
+function showLoadingBanner() {
+  if (!root || loadingBannerEl) return;
+  loadingBannerEl = el(`
+    <div id="boot-loading-banner" style="margin:8px 0;padding:10px 12px;border-radius:10px;background:#f5f6f8;color:#1f2937;font-weight:600;">
+      Loading...
+    </div>
+  `);
+  root.prepend(loadingBannerEl);
+}
+
+function hideLoadingBanner() {
+  if (!loadingBannerEl) return;
+  loadingBannerEl.remove();
+  loadingBannerEl = null;
+}
+
+function renderFatalErrorPanel(phase, error) {
+  if (!root) return;
+  const { message, stack } = extractErrorMeta(error);
+  const stackHtml = stack ? `<pre style="white-space:pre-wrap;word-break:break-word;margin:8px 0 0;">${escapeHtml(stack)}</pre>` : "";
+  root.innerHTML = `
+    <div class="card" style="border:1px solid #ef4444;background:#fef2f2;color:#991b1b;">
+      <h3 style="margin:0 0 8px;">初期化エラー</h3>
+      <div><strong>phase:</strong> ${escapeHtml(phase)}</div>
+      <div style="margin-top:6px;"><strong>message:</strong> ${escapeHtml(message)}</div>
+      ${stackHtml}
+    </div>
+  `;
+}
+
+function registerGlobalErrorHandlers() {
+  if (globalErrorHandlersRegistered) return;
+  globalErrorHandlersRegistered = true;
+  window.onerror = (message, source, lineno, colno, error) => {
+    const err = error ?? new Error(`${message} (${source}:${lineno}:${colno})`);
+    phaseLog("WINDOW_ERROR", { message: String(message), source, lineno, colno });
+    console.error("[BOOT] window.onerror", err);
+    renderFatalErrorPanel(currentBootPhase, err);
+    uploadDebugLogIfEnabled("window.onerror", {
+      message: String(message),
+      source: source ?? null,
+      lineno: lineno ?? null,
+      colno: colno ?? null,
+      stack: extractErrorMeta(err).stack,
+    });
+  };
+  window.onunhandledrejection = (event) => {
+    const reason = event?.reason ?? new Error("Unhandled rejection");
+    phaseLog("UNHANDLED_REJECTION", {
+      reason: reason instanceof Error ? reason.message : String(reason),
+    });
+    console.error("[BOOT] window.onunhandledrejection", reason);
+    renderFatalErrorPanel(currentBootPhase, reason);
+    uploadDebugLogIfEnabled("unhandledrejection", {
+      reason: reason instanceof Error ? reason.message : String(reason),
+      stack: extractErrorMeta(reason).stack,
+    });
+  };
+}
 
 const debugState = ENABLE_DEBUG
   ? {
@@ -334,6 +445,11 @@ function formatPlanStart(plan) {
   return UI.placeholder;
 }
 
+function formatStartSlotTime(slot) {
+  if (typeof slot !== "string" || !/^\d{12}$/.test(slot)) return UI.placeholder;
+  return `${slot.slice(8, 10)}:${slot.slice(10, 12)}`;
+}
+
 function resultLabel(value) {
   if (value === "light") return "軽め";
   if (value === "as_planned") return "予定通り";
@@ -465,6 +581,40 @@ async function initLiffOptional() {
   }
 }
 
+function formatUid(uid) {
+  if (!uid) return "";
+  if (uid.length <= 15) return uid;
+  return `${uid.slice(0, 8)}…${uid.slice(-6)}`;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "absolute";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function getDecodedIdTokenSafe() {
+  if (webMode) return null;
+  const liffApi = window.liff;
+  if (!liffApi || typeof liffApi.getDecodedIDToken !== "function") return null;
+  try {
+    return liffApi.getDecodedIDToken() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function ensureWebPreviewBanner() {
   if (!webMode) return;
   if (document.getElementById("web-preview-banner")) return;
@@ -474,17 +624,107 @@ function ensureWebPreviewBanner() {
   app.appendChild(banner);
 }
 
-async function syncLiffProfile(uid, me) {
-  liffProfile = await getLiffProfileSafe();
-  if (!liffProfile) return;
-  const payload = {
-    pictureUrl: liffProfile.pictureUrl ?? null,
-    lineUserId: liffProfile.userId ?? null,
-    updatedAt: new Date(),
+function bindSettingsAvatarDebug(wrapper) {
+  if (!SETTINGS_DEBUG) return;
+  const statusEl = wrapper.querySelector("#settings-avatar-debug");
+  if (!statusEl) return;
+  const img = wrapper.querySelector(".settings-user-card .header-avatar img");
+  if (!img) {
+    statusEl.textContent = "画像なし（fallback表示）";
+    return;
+  }
+  const showError = () => {
+    const href = img.currentSrc || img.src;
+    statusEl.innerHTML = `画像読み込み失敗${href ? `: <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">画像URLを開く</a>` : ""}`;
   };
-  if (!me?.displayName) payload.displayName = liffProfile.displayName ?? null;
+  img.addEventListener("error", showError, { once: true });
+  if (img.complete && img.naturalWidth === 0) {
+    showError();
+  }
+}
+
+async function loadSettingsDebugInfo(wrapper) {
+  if (!SETTINGS_DEBUG) return;
+  const panel = wrapper.querySelector("#settings-debug-panel");
+  if (!panel) return;
+
+  const debug = {
+    href: location.href,
+    webMode,
+    liff: {
+      isLoggedIn: null,
+      permissionGrantedAll: null,
+      profile: null,
+      decodedIdToken: null,
+      errors: {},
+    },
+  };
+  const liffApi = window.liff;
+  if (!liffApi) {
+    debug.liff.errors.sdk = "LIFF SDK not found";
+    panel.innerHTML = `<pre class="debug-pre">${escapeHtml(safeJson(debug))}</pre>`;
+    return;
+  }
+
   try {
-    await upsertMyUserProfile(uid, payload);
+    debug.liff.isLoggedIn = typeof liffApi.isLoggedIn === "function" ? liffApi.isLoggedIn() : "unsupported";
+  } catch (error) {
+    debug.liff.errors.isLoggedIn = error instanceof Error ? error.message : String(error);
+  }
+
+  try {
+    if (liffApi.permission && typeof liffApi.permission.getGrantedAll === "function") {
+      debug.liff.permissionGrantedAll = await liffApi.permission.getGrantedAll();
+    } else {
+      debug.liff.permissionGrantedAll = "unsupported";
+    }
+  } catch (error) {
+    debug.liff.errors.permission = error instanceof Error ? error.message : String(error);
+  }
+
+  try {
+    if (typeof liffApi.getProfile === "function") {
+      const p = await liffApi.getProfile();
+      debug.liff.profile = {
+        displayName: p?.displayName ?? null,
+        userId: p?.userId ?? null,
+        pictureUrl: p?.pictureUrl ?? null,
+      };
+    } else {
+      debug.liff.profile = "unsupported";
+    }
+  } catch (error) {
+    debug.liff.errors.getProfile = error instanceof Error ? error.message : String(error);
+  }
+
+  try {
+    if (typeof liffApi.getDecodedIDToken === "function") {
+      const token = liffApi.getDecodedIDToken();
+      debug.liff.decodedIdToken = token
+        ? {
+            name: token.name ?? null,
+            picture: token.picture ?? null,
+          }
+        : null;
+    } else {
+      debug.liff.decodedIdToken = "unsupported";
+    }
+  } catch (error) {
+    debug.liff.errors.getDecodedIDToken = error instanceof Error ? error.message : String(error);
+  }
+
+  panel.innerHTML = `<pre class="debug-pre">${escapeHtml(safeJson(debug))}</pre>`;
+}
+
+async function syncLiffProfile(uid) {
+  liffProfile = await getLiffProfileSafe();
+  const decodedIdToken = getDecodedIdTokenSafe();
+  if (!liffProfile && !decodedIdToken) return;
+  try {
+    await upsertMyLineProfile(uid, {
+      profile: liffProfile,
+      decodedIdToken,
+    });
   } catch (error) {
     console.warn("Profile upsert skipped.", error);
   }
@@ -520,8 +760,17 @@ function buildStartTimeOptions() {
 function navigateToView(nextView) {
   const q = new URLSearchParams(location.search);
   q.set("view", nextView);
+  q.delete("planId");
   const query = q.toString();
   location.href = `${location.pathname}${query ? `?${query}` : ""}${location.hash}`;
+}
+
+function navigateToRecordWithPlan(planId) {
+  const q = new URLSearchParams(location.search);
+  q.set("view", "record");
+  q.set("planId", planId);
+  const query = q.toString();
+  location.href = `${location.pathname}?${query}${location.hash}`;
 }
 
 async function tryCloseLiffWindow() {
@@ -552,6 +801,83 @@ function panelTitleHtml(title, { showGear = true } = {}) {
       }
     </div>
   `;
+}
+
+function showToast(message, durationMs = 1000) {
+  const toast = el(`<div class="toast">${escapeHtml(message)}</div>`);
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("show"));
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      toast.classList.remove("show");
+      setTimeout(() => {
+        toast.remove();
+        resolve();
+      }, 180);
+    }, durationMs);
+  });
+}
+
+function showConfirmModal({
+  title = "確認",
+  message = "",
+  okText = "OK",
+  cancelText = "キャンセル",
+} = {}) {
+  return new Promise((resolve) => {
+    const overlay = el(`
+      <div class="modal-overlay">
+        <div class="modal-card confirm-modal-card">
+          <button class="modal-close" aria-label="close">&times;</button>
+          <div class="confirm-modal-body">
+            <h3 class="confirm-modal-title">${escapeHtml(title)}</h3>
+            <div class="confirm-modal-message">${escapeHtml(message)}</div>
+            <div class="confirm-modal-actions">
+              <button type="button" class="secondary" id="confirm-cancel">${escapeHtml(cancelText)}</button>
+              <button type="button" id="confirm-ok">${escapeHtml(okText)}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `);
+
+    let settled = false;
+    const close = (result) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown);
+      overlay.remove();
+      resolve(result);
+    };
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") close(false);
+    };
+
+    overlay.querySelector(".modal-close").onclick = () => close(false);
+    overlay.querySelector("#confirm-cancel").onclick = () => close(false);
+    overlay.querySelector("#confirm-ok").onclick = () => close(true);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close(false);
+    });
+    document.addEventListener("keydown", onKeyDown);
+    document.body.appendChild(overlay);
+  });
+}
+
+async function getMyOpenPlans(limitCount = 200) {
+  if (!state.familyId || !auth.currentUser?.uid) return [];
+  const uid = auth.currentUser.uid;
+  const plans = await listPlans(state.familyId, uid, false, limitCount);
+  return plans
+    .filter((p) => p?.userId === uid && p?.status === "declared" && !p?.recordedAt && !p?.cancelledAt)
+    .sort((a, b) => {
+      const aSlot = typeof a?.startSlot === "string" && /^\d{12}$/.test(a.startSlot) ? a.startSlot : "999999999999";
+      const bSlot = typeof b?.startSlot === "string" && /^\d{12}$/.test(b.startSlot) ? b.startSlot : "999999999999";
+      if (aSlot !== bSlot) return aSlot.localeCompare(bSlot);
+      const aCreated = toDateMaybe(a?.createdAt)?.getTime() ?? 0;
+      const bCreated = toDateMaybe(b?.createdAt)?.getTime() ?? 0;
+      return aCreated - bCreated;
+    });
 }
 
 function toUserErrorMessage(error) {
@@ -649,9 +975,21 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
           <div class="header-avatar">${avatarHtml(state.me, "me")}</div>
           <div class="profile-meta">
             <div class="profile-name">${escapeHtml(displayNameForHeader)}</div>
-            ${uidText ? `<div class="muted">UID: ${escapeHtml(uidText)}</div>` : ""}
+            ${
+              uidText
+                ? `
+                  <div class="uid-row">
+                    <span class="muted uid-text">UID: ${escapeHtml(formatUid(uidText))}</span>
+                    <button type="button" id="copy-uid-btn" class="secondary uid-copy-btn">コピー</button>
+                  </div>
+                  <div id="uid-copy-status" class="muted uid-copy-status" aria-live="polite"></div>
+                  ${SETTINGS_DEBUG ? `<div class="muted uid-full">フルUID: ${escapeHtml(uidText)}</div>` : ""}
+                `
+                : ""
+            }
           </div>
         </div>
+        ${SETTINGS_DEBUG ? `<div id="settings-avatar-debug" class="muted"></div>` : ""}
         ${modal ? "" : `<h3 class="settings-title">設定</h3>`}
         <input id="displayName" placeholder="表示名" value="${escapeHtml(displayNameForInput)}" />
         <div class="setting-toggle-row">
@@ -681,6 +1019,7 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
             <button type="button" id="copy-child-code" class="secondary">コピー</button>
           </div>
         </div>` : ""}
+        ${SETTINGS_DEBUG ? `<div id="settings-debug-panel" class="card"></div>` : ""}
         <button id="save-settings">保存する</button>
       </div>
     </div>
@@ -707,7 +1046,7 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
     wrapper.querySelector("#displayName").value = nextName;
     const titleName = wrapper.querySelector(".settings-user-card .profile-name");
     if (titleName) titleName.textContent = nextName || "ユーザー";
-    alert("保存しました。");
+    await showToast("保存しました。");
   };
 
   if (state.role === "parent") {
@@ -715,6 +1054,30 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
     bindCopyButton(wrapper.querySelector("#copy-child-code"), wrapper.querySelector("#invite-child-code"));
     loadInviteCodesInto(wrapper);
   }
+  const uidCopyBtn = wrapper.querySelector("#copy-uid-btn");
+  if (uidCopyBtn && uidText) {
+    uidCopyBtn.addEventListener("click", async () => {
+      const status = wrapper.querySelector("#uid-copy-status");
+      try {
+        const ok = await copyTextToClipboard(uidText);
+        if (status) {
+          status.textContent = ok ? "コピーしました" : "コピーできませんでした";
+          setTimeout(() => {
+            status.textContent = "";
+          }, 1200);
+        }
+      } catch {
+        if (status) {
+          status.textContent = "コピーできませんでした";
+          setTimeout(() => {
+            status.textContent = "";
+          }, 1200);
+        }
+      }
+    });
+  }
+  bindSettingsAvatarDebug(wrapper);
+  loadSettingsDebugInfo(wrapper);
 
   return wrapper;
 }
@@ -762,10 +1125,27 @@ function renderSettingsPage(panel) {
 }
 
 async function bootstrap() {
+  phaseLog("BOOT", {
+    href: location.href,
+    view: params.get("view"),
+    mode: params.get("mode"),
+  });
+  await uploadDebugLogIfEnabled("boot", {
+    search: location.search,
+    hash: location.hash,
+    userAgent: navigator.userAgent,
+  });
   renderDebugPanel();
+  phaseLog("LIFF_INIT");
   await initLiffOptional();
+  phaseLog("LIFF_INIT_DONE", {
+    webMode,
+    liffInClient: typeof window.liff?.isInClient === "function" ? window.liff.isInClient() : "n/a",
+    liffOs: typeof window.liff?.getOS === "function" ? window.liff.getOS() : "n/a",
+  });
   ensureWebPreviewBanner();
 
+  phaseLog("AUTH");
   if (webMode) {
     collectLiffDebug("webmode-anon-auth");
     await ensureAnonymousAuth();
@@ -787,21 +1167,28 @@ async function bootstrap() {
     await signInWithLineIdToken(idToken, LIFF_ID.split("-")[0]);
   }
 
+  phaseLog("AUTH_DONE");
   const user = await waitAuth();
   collectLiffDebug("after-firebase-auth");
   await updateFirebaseAuthDebug(user);
   if (!user) {
+    phaseLog("AUTH_NO_USER");
     root.innerHTML = `<div class="card">認証が必要です。</div>`;
+    hideLoadingBanner();
     return;
   }
   clearDebugError();
+  phaseLog("USERDOC");
   let me = await getMyUser(user.uid);
-  await syncLiffProfile(user.uid, me);
+  await syncLiffProfile(user.uid);
   me = await getMyUser(user.uid);
   state.me = { uid: user.uid, ...(me ?? {}) };
   state.familyId = me?.familyId ?? null;
   startUserSubscription(user.uid);
+  phaseLog("RENDER");
   await render();
+  phaseLog("RENDER_DONE");
+  hideLoadingBanner();
 }
 
 async function render() {
@@ -843,7 +1230,7 @@ function renderOnboarding() {
       await render();
     } catch (error) {
       console.error("createFamily failed", error);
-      alert(toUserErrorMessage(error));
+      await showToast(toUserErrorMessage(error));
     } finally {
       createBtn.disabled = false;
       createBtn.textContent = original;
@@ -855,7 +1242,7 @@ function renderOnboarding() {
     const code = (codeInput.value || "").trim();
     if (!code) {
       status.textContent = "コードを入力してね";
-      alert("コードを入力してね");
+      await showToast("コードを入力してね");
       return;
     }
     joinBtn.disabled = true;
@@ -880,7 +1267,7 @@ function renderOnboarding() {
       console.error("joinFamilyByCode failed", error);
       const message = toUserErrorMessage(error);
       status.textContent = message;
-      alert(message);
+      await showToast(message);
     } finally {
       joinBtn.disabled = false;
       joinBtn.textContent = original;
@@ -920,10 +1307,16 @@ async function renderHome() {
   if (view === "record") await renderRecord(currentPanel);
   else if (view === "stats") await renderStats(currentPanel);
   else if (view === "settings") renderSettingsPage(currentPanel);
+  else if (view === "plans") await renderPlans(currentPanel);
   else await renderDeclare(currentPanel);
 }
 
 async function renderDeclare(panel) {
+  const openPlans = await getMyOpenPlans();
+  const plansLinkHtml =
+    openPlans.length > 0
+      ? `<button id="go-plans" type="button" class="link-btn">ほかのやるよ（${openPlans.length}）</button>`
+      : "";
   const startOptions = buildStartTimeOptions().map((opt) => `<option value="${opt.value}">${opt.label}</option>`).join("");
   const subjectOptions = [
     { code: "en", label: "英語" },
@@ -958,10 +1351,17 @@ async function renderDeclare(panel) {
         </div>
       </div>
       <textarea id="contentMemo" placeholder="内容メモ（任意）"></textarea>
-      <button id="submit-declare">${UI.declareSubmit}</button>
+      <div class="declare-actions">
+        <button id="submit-declare">${UI.declareSubmit}</button>
+        ${plansLinkHtml}
+      </div>
     </div>
   `;
   bindPanelGear(panel);
+  const goPlansBtn = panel.querySelector("#go-plans");
+  if (goPlansBtn) {
+    goPlansBtn.onclick = () => navigateToView("plans");
+  }
 
   const selected = new Set();
   panel.querySelectorAll(".subject-btn").forEach((btn) => {
@@ -996,7 +1396,7 @@ async function renderDeclare(panel) {
   panel.querySelector("#submit-declare").onclick = async () => {
     const subjects = Array.from(selected);
     if (subjects.length === 0) {
-      alert("教科を1つ以上選択してください。");
+      await showToast("教科を1つ以上選択してください。");
       return;
     }
     const startAt = panel.querySelector("#startAt").value || null;
@@ -1009,18 +1409,144 @@ async function renderDeclare(panel) {
       amountValue: amountValueRaw ? Number(amountValueRaw) : null,
       contentMemo: panel.querySelector("#contentMemo").value || null,
     });
-    panel.innerHTML = `
-      <div class="card">
-        <h3>やるよ宣言しました！</h3>
-        <div class="row">
-          <button id="close-liff">閉じる</button>
-          <button id="go-stats" class="secondary">過去のやったよを見る</button>
+    await showToast("やるよを宣言しました");
+    navigateToView("plans");
+  };
+}
+
+async function renderPlans(panel) {
+  panel.innerHTML = `
+    <div class="card">
+      ${panelTitleHtml("ほかのやるよ", { showGear: view !== "settings" })}
+      <button type="button" id="plans-back" class="secondary plans-back-btn">← 戻る</button>
+      <div id="plans-list" class="plans-list"></div>
+      <div id="plans-loading" class="muted" style="display:none;">読み込み中...</div>
+      <div id="plans-sentinel"></div>
+    </div>
+  `;
+  bindPanelGear(panel);
+  panel.querySelector("#plans-back").onclick = () => navigateToView("declare");
+
+  const listEl = panel.querySelector("#plans-list");
+  const loadingEl = panel.querySelector("#plans-loading");
+  const sentinel = panel.querySelector("#plans-sentinel");
+  const titleEl = panel.querySelector(".panel-title-row h3");
+
+  const planMap = new Map();
+  let cursor = null;
+  let hasMore = true;
+  let isLoading = false;
+  let totalLoaded = 0;
+
+  const updateTitle = () => {
+    titleEl.textContent = totalLoaded > 0 ? `ほかのやるよ（${totalLoaded}）` : "ほかのやるよ";
+  };
+
+  const renderPlanItem = (plan) => {
+    const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectLabel).join("・") : UI.placeholder;
+    const startTime = formatStartSlotTime(plan.startSlot);
+    return `
+      <div class="plan-item" data-plan-id="${escapeHtml(plan.id)}" role="button" tabindex="0">
+        <div class="plan-main">
+          <div class="plan-time">${escapeHtml(startTime)}</div>
+          <div class="plan-subjects">${escapeHtml(subjects)}</div>
+        </div>
+        <div class="plan-item-actions">
+          <button type="button" class="secondary plan-action-btn" data-action="record" data-plan-id="${escapeHtml(plan.id)}">やったよ</button>
+          <button type="button" class="secondary plan-action-btn" data-action="delete" data-plan-id="${escapeHtml(plan.id)}">削除</button>
         </div>
       </div>
     `;
-    panel.querySelector("#close-liff").onclick = () => tryCloseLiffWindow();
-    panel.querySelector("#go-stats").onclick = () => navigateToView("stats");
   };
+
+  const loadMore = async () => {
+    if (isLoading || !hasMore) return;
+    isLoading = true;
+    loadingEl.style.display = "block";
+    try {
+      const page = await listOpenPlansPage({
+        familyId: state.familyId,
+        uid: auth.currentUser.uid,
+        limitCount: 50,
+        cursor,
+      });
+      cursor = page.cursor;
+      hasMore = page.hasMore;
+      if (page.items.length === 0 && totalLoaded === 0) {
+        listEl.innerHTML = `<div class="muted">ほかのやるよはありません</div>`;
+      } else {
+        page.items.forEach((plan) => {
+          planMap.set(plan.id, plan);
+          listEl.insertAdjacentHTML("beforeend", renderPlanItem(plan));
+        });
+        totalLoaded += page.items.length;
+      }
+      updateTitle();
+    } finally {
+      isLoading = false;
+      loadingEl.style.display = "none";
+    }
+  };
+
+  listEl.addEventListener("click", async (e) => {
+    const actionBtn = e.target.closest(".plan-action-btn");
+    if (actionBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const action = actionBtn.dataset.action;
+      const planId = actionBtn.dataset.planId;
+      if (!planId) return;
+      if (action === "record") {
+        navigateToRecordWithPlan(planId);
+        return;
+      }
+      if (action === "delete") {
+        const ok = await showConfirmModal({
+          title: "削除していい？",
+          message: "この「やるよ」を消します。",
+          okText: "削除する",
+          cancelText: "やめる",
+        });
+        if (!ok) return;
+        try {
+          await cancelPlan(planId);
+          await showToast("削除しました");
+          await renderPlans(panel);
+        } catch (error) {
+          console.error("cancelPlan failed", error);
+          await showToast(toUserErrorMessage(error));
+        }
+      }
+      return;
+    }
+
+    const item = e.target.closest(".plan-item");
+    if (!item) return;
+    const planId = item.dataset.planId;
+    const plan = planId ? planMap.get(planId) : null;
+    if (!plan) return;
+    const overlay = createPlanDetailModal(plan);
+    document.body.appendChild(overlay);
+  });
+
+  listEl.addEventListener("keydown", (e) => {
+    const item = e.target.closest(".plan-item");
+    if (!item) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    const planId = item.dataset.planId;
+    const plan = planId ? planMap.get(planId) : null;
+    if (!plan) return;
+    const overlay = createPlanDetailModal(plan);
+    document.body.appendChild(overlay);
+  });
+
+  const observer = new IntersectionObserver((entries) => {
+    const hit = entries.some((entry) => entry.isIntersecting);
+    if (hit) loadMore();
+  });
+  observer.observe(sentinel);
+  await loadMore();
 }
 
 function planSummary(plan) {
@@ -1049,7 +1575,7 @@ function renderRecordForm(panel, plan) {
   panel.querySelector("#submit-record").onclick = async () => {
     const memo = panel.querySelector("#recordMemo").value || null;
     await recordPlan(plan.id, panel.querySelector("#result").value, memo);
-    alert("記録しました。");
+    await showToast("やったよを記録しました");
     await renderStats(panel);
   };
 }
@@ -1058,6 +1584,14 @@ async function renderRecord(panel) {
   panel.innerHTML = `<div class="card"><div class="muted">読み込み中...</div></div>`;
   const plans = await listPlans(state.familyId, auth.currentUser.uid, false, 50);
   const openPlans = plans.filter((p) => p.status === "declared");
+  const preferredPlanId = params.get("planId");
+  if (preferredPlanId) {
+    const preferred = openPlans.find((p) => p.id === preferredPlanId);
+    if (preferred) {
+      renderRecordForm(panel, preferred);
+      return;
+    }
+  }
   if (openPlans.length === 0) {
     panel.innerHTML = `
       <div class="card">
@@ -1142,19 +1676,14 @@ function createRecordDetailModal(record, user) {
   return overlay;
 }
 
-async function fillPlanDetail(overlay, record) {
-  const loading = overlay.querySelector("#plan-detail-loading");
-  const content = overlay.querySelector("#plan-detail-content");
-  const plan = await getPlanById(record.planId || record.id);
-  loading.remove();
+function buildPlanDetailRows(plan) {
   if (!plan) {
-    content.innerHTML = `
+    return `
       <div class="section-row"><div class="section-label">${UI.subject}</div><div class="section-value">${UI.placeholder}</div></div>
       <div class="section-row"><div class="section-label">${UI.startAt}</div><div class="section-value">${UI.placeholder}</div></div>
       <div class="section-row"><div class="section-label">${UI.amount}</div><div class="section-value">${UI.placeholder}</div></div>
       <div class="section-row"><div class="section-label">${UI.memo}</div><div class="section-value">${UI.placeholder}</div></div>
     `;
-    return;
   }
   const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
   const start = formatPlanStart(plan);
@@ -1163,12 +1692,42 @@ async function fillPlanDetail(overlay, record) {
     amount = `${plan.amountValue}${plan.amountType === "time" ? "時間" : "ページ"}`;
   }
   const memo = plan.contentMemo ? escapeHtml(plan.contentMemo) : UI.placeholder;
-  content.innerHTML = `
+  return `
     <div class="section-row"><div class="section-label">${UI.subject}</div><div class="section-value">${escapeHtml(subjects)}</div></div>
     <div class="section-row"><div class="section-label">${UI.startAt}</div><div class="section-value">${escapeHtml(start)}</div></div>
     <div class="section-row"><div class="section-label">${UI.amount}</div><div class="section-value">${escapeHtml(amount)}</div></div>
     <div class="section-row"><div class="section-label">${UI.memo}</div><div class="section-value detail-text">${memo}</div></div>
   `;
+}
+
+function createPlanDetailModal(plan) {
+  const overlay = el(`
+    <div class="modal-overlay">
+      <div class="modal-card">
+        <button class="modal-close" aria-label="close">&times;</button>
+        <div class="modal-body">
+          <section class="modal-section">
+            <h4 class="section-title">${UI.sectionPlan}</h4>
+            <div id="plan-detail-content">${buildPlanDetailRows(plan)}</div>
+          </section>
+        </div>
+      </div>
+    </div>
+  `);
+  const close = () => overlay.remove();
+  overlay.querySelector(".modal-close").onclick = close;
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  return overlay;
+}
+
+async function fillPlanDetail(overlay, record) {
+  const loading = overlay.querySelector("#plan-detail-loading");
+  const content = overlay.querySelector("#plan-detail-content");
+  const plan = await getPlanById(record.planId || record.id);
+  loading.remove();
+  content.innerHTML = buildPlanDetailRows(plan);
 }
 
 async function renderStats(panel) {
@@ -1188,55 +1747,23 @@ async function renderStats(panel) {
   const memberOptions = [`<option value="all">全員</option>`]
     .concat(members.map((m) => `<option value="${m.userId}">${getEffectiveDisplayName(m, m.userId)}</option>`))
     .join("");
-  let records;
-  try {
-    records = await listRecords(state.familyId, auth.currentUser.uid, isParent, state.memberFilter, 20);
-  } catch (error) {
-    console.error("Query failed: listRecords", { familyId: state.familyId, isParent, error });
-    throw error;
-  }
+
   let plans;
   try {
-    plans = await listPlans(state.familyId, auth.currentUser.uid, isParent, 200);
+    plans = await listPlans(state.familyId, auth.currentUser.uid, isParent, 500);
   } catch (error) {
     console.error("Query failed: listPlans", { familyId: state.familyId, isParent, error });
     throw error;
   }
   const planMap = new Map(plans.map((p) => [p.id, p]));
+
   const node = el(`
     <div class="card">
       ${panelTitleHtml(UI.statsTitle, { showGear: view !== "settings" })}
       ${isParent ? `<select id="memberFilter">${memberOptions}</select>` : ""}
-      <div class="record-grid">
-        ${
-          records.length === 0
-            ? "<div class='muted'>まだ過去のやったよがありません。</div>"
-            : records
-                .map((r) => {
-                  const user = userMap.get(r.userId) || { userId: r.userId };
-                  const plan = planMap.get(r.planId || r.id);
-                  const planSubjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
-                  const planStart = formatPlanStart(plan);
-                  const memoPreview = r.memo ? `<div class="record-memo">${escapeHtml(String(r.memo))}</div>` : "";
-                  return `
-                    <button class="record-card" data-record-id="${r.id}">
-                      <div class="record-head">
-                        ${avatarHtml(user, "user")}
-                        <div class="record-meta">
-                          <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, r.userId))}</div>
-                          <div class="muted">${escapeHtml(planSubjects)}</div>
-                          <div class="muted">やるよ：${escapeHtml(planStart)}</div>
-                          <div class="muted">やったよ：${escapeHtml(formatDateTime(r.recordedAt || r.createdAt))}</div>
-                        </div>
-                        <span class="record-result">${escapeHtml(resultLabel(r.result))}</span>
-                      </div>
-                      ${memoPreview}
-                    </button>
-                  `;
-                })
-                .join("")
-        }
-      </div>
+      <div id="stats-record-list" class="record-grid"></div>
+      <div id="stats-loading" class="muted" style="display:none;">読み込み中...</div>
+      <div id="stats-sentinel"></div>
     </div>
   `);
   panel.appendChild(node);
@@ -1249,17 +1776,87 @@ async function renderStats(panel) {
       await renderStats(panel);
     };
   }
-  node.querySelectorAll(".record-card").forEach((card) => {
-    card.addEventListener("click", async () => {
-      const recordId = card.dataset.recordId;
-      const record = records.find((r) => r.id === recordId);
-      if (!record) return;
-      const user = userMap.get(record.userId) || { userId: record.userId };
-      const overlay = createRecordDetailModal(record, user);
-      document.body.appendChild(overlay);
-      await fillPlanDetail(overlay, record);
-    });
+
+  const listEl = node.querySelector("#stats-record-list");
+  const loadingEl = node.querySelector("#stats-loading");
+  const sentinel = node.querySelector("#stats-sentinel");
+  const recordMap = new Map();
+  let cursor = null;
+  let hasMore = true;
+  let isLoading = false;
+  let totalLoaded = 0;
+
+  const renderRecordCard = (record) => {
+    const user = userMap.get(record.userId) || { userId: record.userId };
+    const plan = planMap.get(record.planId || record.id);
+    const planSubjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
+    const planStart = formatPlanStart(plan);
+    const memoPreview = record.memo ? `<div class="record-memo">${escapeHtml(String(record.memo))}</div>` : "";
+    return `
+      <button class="record-card" data-record-id="${escapeHtml(record.id)}">
+        <div class="record-head">
+          ${avatarHtml(user, "user")}
+          <div class="record-meta">
+            <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, record.userId))}</div>
+            <div class="muted">${escapeHtml(planSubjects)}</div>
+            <div class="muted">やるよ：${escapeHtml(planStart)}</div>
+            <div class="muted">やったよ：${escapeHtml(formatDateTime(record.recordedAt || record.createdAt))}</div>
+          </div>
+          <span class="record-result">${escapeHtml(resultLabel(record.result))}</span>
+        </div>
+        ${memoPreview}
+      </button>
+    `;
+  };
+
+  const loadMore = async () => {
+    if (isLoading || !hasMore) return;
+    isLoading = true;
+    loadingEl.style.display = "block";
+    try {
+      const page = await listRecordsPage({
+        familyId: state.familyId,
+        uid: auth.currentUser.uid,
+        isParent,
+        memberFilter: state.memberFilter,
+        limitCount: 20,
+        cursor,
+      });
+      cursor = page.cursor;
+      hasMore = page.hasMore;
+      if (page.items.length === 0 && totalLoaded === 0) {
+        listEl.innerHTML = "<div class='muted'>まだ過去のやったよがありません。</div>";
+      } else {
+        page.items.forEach((record) => {
+          recordMap.set(record.id, record);
+          listEl.insertAdjacentHTML("beforeend", renderRecordCard(record));
+        });
+        totalLoaded += page.items.length;
+      }
+    } finally {
+      isLoading = false;
+      loadingEl.style.display = "none";
+    }
+  };
+
+  listEl.addEventListener("click", async (e) => {
+    const card = e.target.closest(".record-card");
+    if (!card) return;
+    const recordId = card.dataset.recordId;
+    const record = recordMap.get(recordId);
+    if (!record) return;
+    const user = userMap.get(record.userId) || { userId: record.userId };
+    const overlay = createRecordDetailModal(record, user);
+    document.body.appendChild(overlay);
+    await fillPlanDetail(overlay, record);
   });
+
+  const observer = new IntersectionObserver((entries) => {
+    const hit = entries.some((entry) => entry.isIntersecting);
+    if (hit) loadMore();
+  });
+  observer.observe(sentinel);
+  await loadMore();
 }
 
 function bootstrapOnce() {
@@ -1270,8 +1867,16 @@ function bootstrapOnce() {
 }
 
 if (shouldBoot) {
+  registerGlobalErrorHandlers();
+  showLoadingBanner();
   bootstrapOnce().catch((e) => {
+    phaseLog("BOOTSTRAP_FATAL", { message: e?.message ?? String(e) });
     setDebugError(e);
-    root.innerHTML = `<div class="card">初期化エラー: ${e.message}</div>`;
+    hideLoadingBanner();
+    renderFatalErrorPanel(currentBootPhase, e);
+    uploadDebugLogIfEnabled("bootstrap.catch", {
+      message: e?.message ?? String(e),
+      stack: extractErrorMeta(e).stack,
+    });
   });
 }

@@ -68,3 +68,10 @@ export function formatStartSlotJst(startSlot: string): string {
   }
   return `${startSlot.slice(0, 4)}/${startSlot.slice(4, 6)}/${startSlot.slice(6, 8)} ${startSlot.slice(8, 10)}:${startSlot.slice(10, 12)}`;
 }
+
+export function formatStartSlotTimeJst(startSlot: string): string {
+  if (!/^\d{12}$/.test(startSlot)) {
+    return startSlot;
+  }
+  return `${startSlot.slice(8, 10)}:${startSlot.slice(10, 12)}`;
+}

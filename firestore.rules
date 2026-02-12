@@ -48,9 +48,19 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if canReadUser(userId);
-      allow create: if false;
+      allow create: if isSelf(userId)
+        && request.resource.data.keys().hasOnly([
+          "lineDisplayName",
+          "pictureUrl",
+          "lineUserId",
+          "createdAt",
+          "updatedAt"
+        ]);
       allow update: if isSelf(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "lineDisplayName",
+          "pictureUrl",
+          "lineUserId",
           "appDisplayName",
           "notifyActivityPlan",
           "notifyActivityRecord",

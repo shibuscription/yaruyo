@@ -2,7 +2,7 @@ import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { db, SERVER_TIMESTAMP } from "../lib/firestore.js";
 import { logDocIdFromDedupeKey, sendLinePush, writeNotificationLogIdempotent } from "../lib/notification.js";
-import { formatStartSlotJst, startSlotRangeWithBufferJst } from "../lib/timeJst.js";
+import { formatStartSlotTimeJst, startSlotRangeWithBufferJst } from "../lib/timeJst.js";
 const BUFFER_MINUTES = 5;
 function subjectText(plan) {
     if (typeof plan.subject === "string" && plan.subject.length > 0) {
@@ -19,9 +19,34 @@ function subjectText(plan) {
         };
         return plan.subjects
             .map((v) => labels[v] ?? v)
-            .join(", ");
+            .join("・");
     }
     return "勉強";
+}
+const REMINDER_SECOND_LINES = [
+    "そろそろ始めよう ✏️",
+    "5分だけでもやってみよう 💪",
+    "まずは机に向かってみよう ✏️",
+    "はじめの一歩、いってみよう 👟",
+    "今日もコツコツいこう ✏️",
+    "宣言どおり、いってみよう ✨",
+    "できるところからでOK 👍",
+    "まずは1問だけやってみよう 📚",
+    "いまがスタートのタイミングだよ ⏳",
+    "気持ちを切り替えていこう ✏️",
+    "タイマーを押してスタート！ ⏰",
+    "今日の目標、思い出してみよう ✏️",
+    "集中モード、オンにしよう 🔛",
+    "さあ、はじめよう ✏️",
+    "今ならまだ間に合うよ 💪",
+    "小さく始めてみよう ✨",
+    "まずはペンを持ってみよう 🖊️",
+    "今日も一歩前進しよう 👣",
+    "コツコツが力になるよ ✏️",
+    "自分との約束、スタートだよ 🏁",
+];
+function pickReminderSecondLine() {
+    return REMINDER_SECOND_LINES[Math.floor(Math.random() * REMINDER_SECOND_LINES.length)];
 }
 export const reminderScheduler = onSchedule({
     region: "asia-northeast1",
@@ -65,11 +90,12 @@ export const reminderScheduler = onSchedule({
             continue;
         }
         try {
-            const startAtText = formatStartSlotJst(plan.startSlot);
+            const startTime = formatStartSlotTimeJst(plan.startSlot);
             const subjectLabel = subjectText(plan);
+            const secondLine = pickReminderSecondLine();
             await sendLinePush({
                 to: recipientId,
-                message: `⏰ やるよの時間です！\n\n${subjectLabel}\n${startAtText}\n\nそろそろ始めよう。`,
+                message: `⏰ ${startTime}から「${subjectLabel}」の時間だよ！\n${secondLine}`,
             });
             await Promise.all([
                 db.doc(`notificationLogs/${logId}`).set({ status: "sent", sentAt: SERVER_TIMESTAMP, updatedAt: SERVER_TIMESTAMP }, { merge: true }),

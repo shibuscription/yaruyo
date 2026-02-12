@@ -77,6 +77,16 @@ button.secondary {
   background: #6d7b74;
 }
 
+.link-btn {
+  background: transparent;
+  color: #5f6f67;
+  border: 1px solid #d4dcd8;
+  margin-right: 0;
+  margin-left: auto;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
 input, select, textarea {
   width: 100%;
   box-sizing: border-box;
@@ -130,6 +140,12 @@ input, select, textarea {
   background: #1e7f5c;
   color: #fff;
   border-color: #1e7f5c;
+}
+
+.declare-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .muted {
@@ -205,6 +221,42 @@ input, select, textarea {
 .record-grid {
   display: grid;
   gap: 10px;
+}
+
+.plans-back-btn {
+  margin-top: 0;
+}
+
+.plans-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.plan-item {
+  border: 1px solid #e7dfd0;
+  border-radius: 10px;
+  padding: 10px;
+  background: #fdfcf9;
+}
+
+.plan-main {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.plan-time {
+  font-weight: 700;
+}
+
+.plan-item-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.plan-item-actions button {
+  margin: 0;
 }
 
 .record-card {
@@ -348,6 +400,36 @@ input, select, textarea {
   margin-bottom: 10px;
 }
 
+.uid-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.uid-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.uid-copy-btn {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+
+.uid-copy-status {
+  min-height: 16px;
+}
+
+.uid-full {
+  word-break: break-all;
+}
+
 .settings-title {
   margin: 0 0 8px;
   font-size: 15px;
@@ -441,6 +523,55 @@ input, select, textarea {
   padding: 4px 8px;
   font-size: 12px;
   z-index: 5;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%) translateY(8px);
+  background: rgba(24, 30, 28, 0.92);
+  color: #fff;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  z-index: 2000;
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.confirm-modal-card {
+  width: min(420px, 100%);
+}
+
+.confirm-modal-body {
+  display: grid;
+  gap: 10px;
+}
+
+.confirm-modal-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.confirm-modal-message {
+  color: #445;
+  white-space: pre-wrap;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-modal-actions button {
+  margin: 0;
 }
 
 .debug-panel {

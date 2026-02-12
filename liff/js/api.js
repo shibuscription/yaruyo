@@ -22,6 +22,8 @@ import {
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
+  startAfter,
   setDoc,
   updateDoc,
   where,
@@ -100,8 +102,52 @@ export async function getPlanById(planId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export async function upsertMyUserProfile(uid, payload) {
-  await setDoc(doc(db, "users", uid), payload, { merge: true });
+export async function upsertMyLineProfile(uid, { profile = null, decodedIdToken = null } = {}) {
+  const ref = doc(db, "users", uid);
+  const snap = await getDoc(ref);
+
+  const profileDisplayName = typeof profile?.displayName === "string" ? profile.displayName.trim() : "";
+  const profilePictureUrl = typeof profile?.pictureUrl === "string" ? profile.pictureUrl.trim() : "";
+  const profileUserId = typeof profile?.userId === "string" ? profile.userId.trim() : "";
+  const tokenName = typeof decodedIdToken?.name === "string" ? decodedIdToken.name.trim() : "";
+  const tokenPicture = typeof decodedIdToken?.picture === "string" ? decodedIdToken.picture.trim() : "";
+
+  const lineDisplayName = profileDisplayName || tokenName || "";
+  const pictureUrl = profilePictureUrl || tokenPicture || "";
+
+  const payload = {
+    updatedAt: serverTimestamp(),
+  };
+
+  if (!snap.exists()) {
+    payload.createdAt = serverTimestamp();
+  }
+  if (lineDisplayName) {
+    payload.lineDisplayName = lineDisplayName;
+  }
+  if (pictureUrl) {
+    payload.pictureUrl = pictureUrl;
+  }
+  if (profileUserId) {
+    payload.lineUserId = profileUserId;
+  }
+
+  console.log("LINE_PROFILE_UPSERT_PRE", {
+    uid,
+    profileDisplayName,
+    profilePictureUrl,
+    tokenName,
+    tokenPicture,
+    writeLineDisplayName: payload.lineDisplayName ?? null,
+    writePictureUrl: payload.pictureUrl ?? null,
+    isCreate: !snap.exists(),
+  });
+  await setDoc(ref, payload, { merge: true });
+  console.log("LINE_PROFILE_UPSERT_DONE", {
+    uid,
+    docId: ref.id,
+    updatedAt: "serverTimestamp",
+  });
 }
 
 export async function createFamily() {
@@ -137,6 +183,53 @@ export async function listRecords(familyId, uid, isParent, memberFilter = "all",
   return (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+export async function listRecordsPage({
+  familyId,
+  uid,
+  isParent,
+  memberFilter = "all",
+  limitCount = 20,
+  cursor = null,
+}) {
+  const filters = [where("familyId", "==", familyId)];
+  if (!isParent || memberFilter !== "all") {
+    filters.push(where("userId", "==", !isParent ? uid : memberFilter));
+  }
+  const constraints = [...filters, orderBy("createdAt", "desc"), limit(limitCount)];
+  if (cursor) constraints.push(startAfter(cursor));
+  const snap = await getDocs(query(collection(db, "records"), ...constraints));
+  const docs = snap.docs;
+  return {
+    items: docs.map((d) => ({ id: d.id, ...d.data() })),
+    cursor: docs.length > 0 ? docs[docs.length - 1] : null,
+    hasMore: docs.length === limitCount,
+  };
+}
+
+export async function listOpenPlansPage({
+  familyId,
+  uid,
+  limitCount = 50,
+  cursor = null,
+}) {
+  const constraints = [
+    where("familyId", "==", familyId),
+    where("userId", "==", uid),
+    where("status", "==", "declared"),
+    orderBy("startSlot", "asc"),
+    orderBy("createdAt", "asc"),
+    limit(limitCount),
+  ];
+  if (cursor) constraints.push(startAfter(cursor));
+  const snap = await getDocs(query(collection(db, "plans"), ...constraints));
+  const docs = snap.docs;
+  return {
+    items: docs.map((d) => ({ id: d.id, ...d.data() })),
+    cursor: docs.length > 0 ? docs[docs.length - 1] : null,
+    hasMore: docs.length === limitCount,
+  };
+}
+
 export async function listFamilyMembers(familyId) {
   const q = query(collection(db, `families/${familyId}/members`), where("status", "==", "active"));
   const memberDocs = await getDocs(q);
@@ -166,4 +259,21 @@ export async function listInviteCodes(familyId) {
 
 export async function updateMySettings(uid, payload) {
   await updateDoc(doc(db, "users", uid), payload);
+}
+
+export async function cancelPlan(planId) {
+  await updateDoc(doc(db, "plans", planId), {
+    status: "cancelled",
+    cancelledAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function writeDebugLog(uid, payload) {
+  const logId = `${uid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  await setDoc(doc(db, "debugLogs", logId), {
+    uid,
+    ...payload,
+    createdAt: new Date(),
+  });
 }
