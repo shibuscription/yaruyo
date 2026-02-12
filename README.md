@@ -1,195 +1,218 @@
 # YARUYO
 
-Family study declaration & completion app built with LIFF + Firebase.
+LINE（LIFF）上で動作する、家族向け学習宣言＆記録アプリ。
 
 ------------------------------------------------------------------------
 
-## Overview
+## 🧭 概要
 
-YARUYO is a lightweight mobile-first study tracking app designed to run
-inside LINE via LIFF.
+YARUYO は、LINE内で動作するモバイルファースト設計の学習トラッカーです。
 
-Users can:
+ユーザーは：
 
--   Declare what they will study (やるよ)
--   Record completion (やったよ)
--   View achievements (実績)
--   Manage settings (表示名 / 通知設定)
+-   やることを宣言する（やるよ）
+-   完了を記録する（やったよ）
+-   過去のやったよを振り返る
+-   通知や表示名を設定する
 
-The app is optimized for smartphone usage inside LINE and designed for
-minimal scrolling per screen.
+30分刻み設計・JST基準で統一されたシンプルな構造です。
 
 ------------------------------------------------------------------------
 
-## Tech Stack
+## 🛠 技術スタック
 
--   LIFF (LINE Front-end Framework)
+-   LIFF（LINE Front-end Framework）
 -   Firebase Auth
 -   Firestore
--   Cloud Functions (callable)
--   Firebase Emulator (local development)
+-   Cloud Functions（callable + scheduled）
+-   Firebase Emulator（ローカル開発用）
 
 ------------------------------------------------------------------------
 
-## Local Development
+## 💻 ローカル開発
 
-### Start Firebase Emulators
+### Firebase Emulator 起動
 
-``` bash
 firebase emulators:start --only auth,firestore,functions
-```
 
-### Start Local Server
+### フロントエンド起動
 
-``` bash
 npx serve .
-```
 
-or use VSCode Live Server (recommended).
+または VSCode Live Server（推奨）
 
-### Open Local UI
+### ローカルUI確認URL
 
-``` text
 http://localhost:5500/liff/index.html?mode=local
-```
 
-Emulator mode banner should appear:
+表示バナー：
 
-> Running in emulator mode. Do not use with production credentials.
-
-------------------------------------------------------------------------
-
-## URL Parameters
-
-### View Switching
-
-    ?view=declare
-    ?view=record
-    ?view=stats
-
-When `view` is specified: - Top navigation tabs are hidden - Only the
-specified screen is shown
-
-### Local Mode
-
-    ?mode=local
-
-Enables: - Auth emulator connection - Firestore emulator connection -
-Functions emulator connection - Anonymous auto-login
+Running in emulator mode. Do not use with production credentials.
 
 ------------------------------------------------------------------------
 
-## Screen Specifications
+## 🔗 URLパラメータ
 
-### 🟢 やるよ (Declare)
+### 画面切り替え
 
-Fields:
+?view=declare\
+?view=record\
+?view=stats\
+?view=settings
 
--   いつから (start time dropdown)
-    -   Default: 未定
-    -   30-minute intervals
-    -   Only future times
-    -   Latest 21:30
--   なにを (subjects)
-    -   Button multi-select (3 x 2 grid)
-        -   英語 / 数学 / 国語
+指定時：
+
+-   上部ナビゲーション非表示
+-   単画面表示
+
+### ローカルモード
+
+?mode=local
+
+有効化されるもの：
+
+-   Auth Emulator
+-   Firestore Emulator
+-   Functions Emulator
+-   匿名自動ログイン
+
+------------------------------------------------------------------------
+
+## 📱 画面仕様
+
+### 🟢 やるよ
+
+入力項目：
+
+-   いつから
+    -   初期値：未定\
+    -   30分刻み\
+    -   未来のみ選択可\
+    -   最終時刻 21:30
+-   なにを
+    -   ボタン形式（3×2グリッド）
+        -   英語 / 数学 / 国語\
         -   理科 / 社会 / その他
 -   どのくらい
-    -   Amount dropdown (1--10)
-    -   Type dropdown (時間 / ページ)
+    -   数値（1〜10）\
+    -   単位トグル（時間 / ページ）
+        -   初期値：時間\
+        -   未選択状態なし
 -   内容メモ（任意）
 
-Submit Button:
+送信ボタン：
 
-    やるよ！
-
-------------------------------------------------------------------------
-
-### 🟢 やったよ (Record)
-
-Flow:
-
-1.  If multiple unfinished declarations → select first
-2.  If one → skip selection
-3.  If none → show guide to やるよ screen
-
-Additional Field:
-
--   メモ（自由入力）
-
-Submit Button:
-
-    やったよ！
+やるよ！
 
 ------------------------------------------------------------------------
 
-### 🟢 実績 (Stats)
+### 🟢 やったよ
 
--   Card-based layout
--   Displays:
-    -   User icon (LINE icon or fallback circle)
-    -   Name
-    -   評価（軽め / 予定通り / 多め）
-    -   完了時刻
+フロー：
 
-Click card → Modal showing:
+1.  未完了のやるよが複数 → 選択\
+2.  1件のみ → 自動選択\
+3.  なし → やるよ画面へ案内
 
-#### やったよ
+入力項目：
 
--   完了時刻
--   メモ
+-   メモ（任意）
 
-#### やるよ
+送信ボタン：
 
--   なにを
--   いつから
--   分量
--   メモ
+やったよ！
 
 ------------------------------------------------------------------------
 
-### 🟢 設定 (Modal)
+### 🟢 過去のやったよ
 
-Opened via top-right gear icon.
+カード表示：
 
-Contains:
+-   ユーザーアイコン
+-   表示名
+-   教科
+-   やるよ：YYYY/MM/DD HH:mm
+-   やったよ：YYYY/MM/DD HH:mm
+-   評価バッジ（軽め / 予定通り / 多め）
 
--   User icon + display name + UID (light bordered box)
+カードクリック → モーダル表示
+
+モーダル構成：
+
+上：やるよ\
+- 教科\
+- 開始時刻\
+- 分量\
+- メモ
+
+下：やったよ\
+- 完了時刻\
+- メモ\
+- 評価バッジ
+
+------------------------------------------------------------------------
+
+### 🟢 設定（モーダル）
+
+タイトル行右端の歯車アイコンから表示。
+
+内容：
+
+-   ユーザーアイコン + 表示名 + UID
 -   表示名編集
--   宣言通知を受け取る
--   完了通知を受け取る
+-   やるよ通知
+-   やったよ通知
+-   開始時刻のリマインドを受け取る（初期値：ON）
 
-Saved to Firestore user profile.
-
-------------------------------------------------------------------------
-
-## Production Behavior (Planned)
-
--   LIFF login with LINE
--   LINE display name fetched on first login
--   Profile image fetched from LINE
--   Display name editable in settings
+Firestore の user プロファイルに保存。
 
 ------------------------------------------------------------------------
 
-## Future Tasks
+## 🔔 開始時刻リマインド通知
 
--   LINE Login integration
--   Rich menu deep linking
--   Notification integration
--   Stats UI refinement
--   Avatar fallback styling
--   Family member management
+### 動作仕様
+
+-   30分ごとにスケジュール実行
+-   JST基準
+-   開始時刻 ±5分の範囲を対象
+-   未完了かつ未送信の plan のみ
+-   ユーザー設定が ON の場合のみ送信
+
+### 重複防止
+
+plan に以下を追加：
+
+startReminderSentAt
+
+送信成功後に更新。
+
+### メッセージ内容
+
+⏰ やるよの時間です！
+
+{教科} {開始時刻}
+
+そろそろ始めよう。
 
 ------------------------------------------------------------------------
 
-## Notes
+## 🔒 設計方針
 
--   Designed for single-screen mobile usage
--   Settings shown as modal (not full page)
--   Header visibility controlled by URL parameter when launched from
-    rich menu
+-   records は client 直書き禁止
+-   重要操作は Callable 経由
+-   JST統一
+-   30分刻み設計
+-   単画面スマホ最適化
 
 ------------------------------------------------------------------------
 
-Built with speed + iteration mindset.
+## 🚀 本番運用（予定）
+
+-   LIFF + LINEログイン
+-   LINEプロフィール取得
+-   表示名初期反映
+-   LINE通知本番連携
+
+------------------------------------------------------------------------
+
+Built with iteration mindset.

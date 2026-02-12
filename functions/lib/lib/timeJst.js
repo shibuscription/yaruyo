@@ -21,3 +21,39 @@ export function currentWindowSlotJst(now = new Date()) {
     const { startSlot } = roundTo30MinutesJst(now.toISOString());
     return { windowSlot: startSlot };
 }
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+function toJstDate(date) {
+    return new Date(date.getTime() + JST_OFFSET_MS);
+}
+export function formatJstDateTime(value) {
+    const jst = toJstDate(value);
+    const y = jst.getUTCFullYear();
+    const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(jst.getUTCDate()).padStart(2, "0");
+    const hh = String(jst.getUTCHours()).padStart(2, "0");
+    const mm = String(jst.getUTCMinutes()).padStart(2, "0");
+    return `${y}/${m}/${d} ${hh}:${mm}`;
+}
+export function startSlotFromDateJst(date) {
+    const jst = toJstDate(date);
+    const y = jst.getUTCFullYear();
+    const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(jst.getUTCDate()).padStart(2, "0");
+    const hh = String(jst.getUTCHours()).padStart(2, "0");
+    const mm = String(jst.getUTCMinutes()).padStart(2, "0");
+    return `${y}${m}${d}${hh}${mm}`;
+}
+export function startSlotRangeWithBufferJst(now = new Date(), bufferMinutes = 5) {
+    const from = new Date(now.getTime() - bufferMinutes * 60 * 1000);
+    const to = new Date(now.getTime() + bufferMinutes * 60 * 1000);
+    return {
+        fromSlot: startSlotFromDateJst(from),
+        toSlot: startSlotFromDateJst(to),
+    };
+}
+export function formatStartSlotJst(startSlot) {
+    if (!/^\d{12}$/.test(startSlot)) {
+        return startSlot;
+    }
+    return `${startSlot.slice(0, 4)}/${startSlot.slice(4, 6)}/${startSlot.slice(6, 8)} ${startSlot.slice(8, 10)}:${startSlot.slice(10, 12)}`;
+}

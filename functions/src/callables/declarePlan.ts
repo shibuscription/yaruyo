@@ -60,6 +60,7 @@ export const declarePlan = onCall({ region: "asia-northeast1" }, async (request)
         status: "declared",
         cancelledAt: null,
         recordedAt: null,
+        startReminderSentAt: null,
         createdAt: SERVER_TIMESTAMP,
         updatedAt: SERVER_TIMESTAMP,
       });

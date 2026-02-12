@@ -28,7 +28,6 @@ function normalizeLiffUrl() {
 
 const shouldBoot = normalizeLiffUrl();
 const root = document.getElementById("app-root");
-const topbar = document.querySelector(".topbar");
 const params = new URLSearchParams(location.search);
 const view = ["declare", "record", "stats", "settings"].includes(params.get("view")) ? params.get("view") : null;
 
@@ -37,7 +36,7 @@ const UI = {
   declareSubmit: "やるよ！",
   recordTitle: "やったよ",
   recordSubmit: "やったよ！",
-  statsTitle: "実績",
+  statsTitle: "過去のやったよ",
   labelWhen: "いつから",
   labelWhat: "なにを",
   labelHowMuch: "どのくらい",
@@ -88,24 +87,29 @@ function toDateMaybe(value) {
 function formatDateTime(value) {
   const d = toDateMaybe(value);
   if (!d) return UI.placeholder;
-  return new Intl.DateTimeFormat("ja-JP", {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(d);
+    hour12: false,
+  }).formatToParts(d);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${map.year}/${map.month}/${map.day} ${map.hour}:${map.minute}`;
 }
 
-function formatStartTime(value) {
-  const d = toDateMaybe(value);
-  if (!d) return UI.placeholder;
-  return new Intl.DateTimeFormat("ja-JP", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(d);
+function formatStartSlot(slot) {
+  if (typeof slot !== "string" || !/^\d{12}$/.test(slot)) return UI.placeholder;
+  return `${slot.slice(0, 4)}/${slot.slice(4, 6)}/${slot.slice(6, 8)} ${slot.slice(8, 10)}:${slot.slice(10, 12)}`;
+}
+
+function formatPlanStart(plan) {
+  if (!plan) return UI.placeholder;
+  if (plan.startAt) return formatDateTime(plan.startAt);
+  if (plan.startSlot) return formatStartSlot(plan.startSlot);
+  return UI.placeholder;
 }
 
 function resultLabel(value) {
@@ -222,14 +226,26 @@ async function tryCloseLiffWindow() {
   if (history.length > 1) history.back();
 }
 
-function ensureGearButton() {
-  if (!topbar || topbar.querySelector("#global-settings")) return;
-  const button = el(`<button id="global-settings" class="icon-btn" aria-label="settings">&#9881;</button>`);
-  button.addEventListener("click", async () => {
+function panelTitleHtml(title, { showGear = true } = {}) {
+  return `
+    <div class="panel-title-row">
+      <h3>${escapeHtml(title)}</h3>
+      ${
+        showGear
+          ? '<button type="button" class="icon-btn panel-settings-btn" aria-label="settings">&#9881;</button>'
+          : ""
+      }
+    </div>
+  `;
+}
+
+function bindPanelGear(container) {
+  const btn = container.querySelector(".panel-settings-btn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
     if (!auth.currentUser) return;
     openSettingsModal();
   });
-  topbar.appendChild(button);
 }
 
 function createSettingsContent({ modal = false, showBack = false } = {}) {
@@ -255,12 +271,16 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
         ${modal ? "" : `<h3 class="settings-title">設定</h3>`}
         <input id="displayName" placeholder="表示名" value="${escapeHtml(displayNameForInput)}" />
         <div class="setting-toggle-row">
-          <span>宣言通知を受け取る</span>
+          <span>やるよ通知を受け取る</span>
           <input id="notifyPlan" type="checkbox" ${state.me.notifyActivityPlan ? "checked" : ""} />
         </div>
         <div class="setting-toggle-row">
-          <span>完了通知を受け取る</span>
+          <span>やったよ通知を受け取る</span>
           <input id="notifyRecord" type="checkbox" ${state.me.notifyActivityRecord ? "checked" : ""} />
+        </div>
+        <div class="setting-toggle-row">
+          <span>開始時刻リマインドを受け取る</span>
+          <input id="notifyStartReminder" type="checkbox" ${state.me.notificationSettings?.startReminderEnabled !== false ? "checked" : ""} />
         </div>
         <button id="save-settings">保存する</button>
       </div>
@@ -276,6 +296,9 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
       appDisplayName: wrapper.querySelector("#displayName").value || null,
       notifyActivityPlan: wrapper.querySelector("#notifyPlan").checked,
       notifyActivityRecord: wrapper.querySelector("#notifyRecord").checked,
+      notificationSettings: {
+        startReminderEnabled: wrapper.querySelector("#notifyStartReminder").checked,
+      },
       updatedAt: new Date(),
     });
     const me = await getMyUser(auth.currentUser.uid);
@@ -330,7 +353,6 @@ function renderSettingsPage(panel) {
 }
 
 async function bootstrap() {
-  ensureGearButton();
   const user = await waitAuth();
   if (!user) {
     root.innerHTML = `<div class="card">認証が必要です。</div>`;
@@ -432,7 +454,7 @@ async function renderDeclare(panel) {
 
   panel.innerHTML = `
     <div class="card">
-      <h3>${UI.declareTitle}</h3>
+      ${panelTitleHtml(UI.declareTitle, { showGear: view !== "settings" })}
       <label for="startAt">${UI.labelWhen}</label>
       <select id="startAt">${startOptions}</select>
       <div>${UI.labelWhat}</div>
@@ -444,17 +466,18 @@ async function renderDeclare(panel) {
         </div>
         <div>
           <label for="amountType" class="label-placeholder">${UI.hiddenTypeLabel}</label>
-          <select id="amountType">
-            <option value="">-</option>
-            <option value="time">時間</option>
-            <option value="page">ページ</option>
-          </select>
+          <input id="amountType" type="hidden" value="time" />
+          <div class="amount-type-toggle" role="group" aria-label="どのくらいの単位">
+            <button type="button" class="amount-type-btn" data-value="time">時間</button>
+            <button type="button" class="amount-type-btn" data-value="page">ページ</button>
+          </div>
         </div>
       </div>
       <textarea id="contentMemo" placeholder="内容メモ（任意）"></textarea>
       <button id="submit-declare">${UI.declareSubmit}</button>
     </div>
   `;
+  bindPanelGear(panel);
 
   const selected = new Set();
   panel.querySelectorAll(".subject-btn").forEach((btn) => {
@@ -470,6 +493,21 @@ async function renderDeclare(panel) {
       }
     });
   });
+
+  const amountTypeInput = panel.querySelector("#amountType");
+  const amountTypeButtons = panel.querySelectorAll(".amount-type-btn");
+  const setAmountType = (value) => {
+    amountTypeInput.value = value;
+    amountTypeButtons.forEach((btn) => {
+      const active = btn.dataset.value === value;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", String(active));
+    });
+  };
+  amountTypeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => setAmountType(btn.dataset.value ?? ""));
+  });
+  setAmountType("time");
 
   panel.querySelector("#submit-declare").onclick = async () => {
     const subjects = Array.from(selected);
@@ -489,10 +527,10 @@ async function renderDeclare(panel) {
     });
     panel.innerHTML = `
       <div class="card">
-        <h3>宣言しました！</h3>
+        <h3>やるよ宣言しました！</h3>
         <div class="row">
           <button id="close-liff">閉じる</button>
-          <button id="go-stats" class="secondary">実績を見る</button>
+          <button id="go-stats" class="secondary">過去のやったよを見る</button>
         </div>
       </div>
     `;
@@ -503,7 +541,7 @@ async function renderDeclare(panel) {
 
 function planSummary(plan) {
   const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
-  const when = plan.startSlot || UI.placeholder;
+  const when = formatPlanStart(plan);
   const created = formatDateTime(plan.createdAt);
   return { subjects, when, created };
 }
@@ -512,8 +550,8 @@ function renderRecordForm(panel, plan) {
   const summary = planSummary(plan);
   panel.innerHTML = `
     <div class="card">
-      <h3>${UI.recordTitle}</h3>
-      <div class="muted">対象: ${escapeHtml(summary.subjects)} / ${escapeHtml(summary.when)}</div>
+      ${panelTitleHtml(UI.recordTitle, { showGear: view !== "settings" })}
+      <div class="muted">${escapeHtml(summary.subjects)} ${escapeHtml(summary.when)}</div>
       <select id="result">
         <option value="light">軽め</option>
         <option value="as_planned">予定通り</option>
@@ -523,6 +561,7 @@ function renderRecordForm(panel, plan) {
       <button id="submit-record">${UI.recordSubmit}</button>
     </div>
   `;
+  bindPanelGear(panel);
   panel.querySelector("#submit-record").onclick = async () => {
     const memo = panel.querySelector("#recordMemo").value || null;
     await recordPlan(plan.id, panel.querySelector("#result").value, memo);
@@ -538,11 +577,12 @@ async function renderRecord(panel) {
   if (openPlans.length === 0) {
     panel.innerHTML = `
       <div class="card">
-        <h3>${UI.recordTitle}</h3>
+        ${panelTitleHtml(UI.recordTitle, { showGear: view !== "settings" })}
         <div class="muted">やるよがありません</div>
         <button id="go-declare">やるよへ</button>
       </div>
     `;
+    bindPanelGear(panel);
     panel.querySelector("#go-declare").onclick = () => navigateToView("declare");
     return;
   }
@@ -552,11 +592,12 @@ async function renderRecord(panel) {
   }
   panel.innerHTML = `
     <div class="card">
-      <h3>${UI.recordTitle}</h3>
+      ${panelTitleHtml(UI.recordTitle, { showGear: view !== "settings" })}
       <div class="muted">対象のやるよを選択してください</div>
       <div class="record-grid" id="open-plan-list"></div>
     </div>
   `;
+  bindPanelGear(panel);
   const list = panel.querySelector("#open-plan-list");
   openPlans.forEach((plan) => {
     const s = planSummary(plan);
@@ -585,18 +626,25 @@ function createRecordDetailModal(record, user) {
             ${avatarHtml(user, "user")}
             <div class="profile-meta">
               <div class="profile-name">${escapeHtml(getEffectiveDisplayName(user, record.userId))}</div>
-              <div class="muted">${resultLabel(record.result)}</div>
             </div>
           </div>
-          <section class="modal-section">
-            <h4 class="section-title">${UI.sectionRecord}</h4>
-            <div class="section-row"><div class="section-label">${UI.doneAt}</div><div class="section-value">${formatDateTime(record.recordedAt || record.createdAt)}</div></div>
-            <div class="section-row"><div class="section-label">${UI.memo}</div><div class="section-value detail-text">${record.memo ? escapeHtml(record.memo) : UI.placeholder}</div></div>
-          </section>
           <section class="modal-section">
             <h4 class="section-title">${UI.sectionPlan}</h4>
             <div id="plan-detail-loading" class="muted">読み込み中...</div>
             <div id="plan-detail-content"></div>
+          </section>
+          <section class="modal-section">
+            <h4 class="section-title">${UI.sectionRecord}</h4>
+            <div class="section-row">
+              <div class="section-label">${UI.doneAt}</div>
+              <div class="section-value">
+                <div class="section-inline">
+                  <span>${formatDateTime(record.recordedAt || record.createdAt)}</span>
+                  <span class="record-result">${escapeHtml(resultLabel(record.result))}</span>
+                </div>
+              </div>
+            </div>
+            <div class="section-row"><div class="section-label">${UI.memo}</div><div class="section-value detail-text">${record.memo ? escapeHtml(record.memo) : UI.placeholder}</div></div>
           </section>
         </div>
       </div>
@@ -625,7 +673,7 @@ async function fillPlanDetail(overlay, record) {
     return;
   }
   const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
-  const start = plan.startAt ? formatStartTime(plan.startAt) : UI.placeholder;
+  const start = formatPlanStart(plan);
   let amount = UI.placeholder;
   if (plan.amountType && plan.amountValue != null) {
     amount = `${plan.amountValue}${plan.amountType === "time" ? "時間" : "ページ"}`;
@@ -651,17 +699,22 @@ async function renderStats(panel) {
     .concat(members.map((m) => `<option value="${m.userId}">${getEffectiveDisplayName(m, m.userId)}</option>`))
     .join("");
   const records = await listRecords(state.familyId, auth.currentUser.uid, isParent, state.memberFilter, 20);
+  const plans = await listPlans(state.familyId, auth.currentUser.uid, isParent, 200);
+  const planMap = new Map(plans.map((p) => [p.id, p]));
   const node = el(`
     <div class="card">
-      <h3>${UI.statsTitle}</h3>
+      ${panelTitleHtml(UI.statsTitle, { showGear: view !== "settings" })}
       ${isParent ? `<select id="memberFilter">${memberOptions}</select>` : ""}
       <div class="record-grid">
         ${
           records.length === 0
-            ? "<div class='muted'>まだ実績がありません。</div>"
+            ? "<div class='muted'>まだ過去のやったよがありません。</div>"
             : records
                 .map((r) => {
                   const user = userMap.get(r.userId) || { userId: r.userId };
+                  const plan = planMap.get(r.planId || r.id);
+                  const planSubjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
+                  const planStart = formatPlanStart(plan);
                   const memoPreview = r.memo ? `<div class="record-memo">${escapeHtml(String(r.memo))}</div>` : "";
                   return `
                     <button class="record-card" data-record-id="${r.id}">
@@ -669,7 +722,9 @@ async function renderStats(panel) {
                         ${avatarHtml(user, "user")}
                         <div class="record-meta">
                           <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, r.userId))}</div>
-                          <div class="muted">${escapeHtml(formatDateTime(r.recordedAt || r.createdAt))}</div>
+                          <div class="muted">${escapeHtml(planSubjects)}</div>
+                          <div class="muted">やるよ：${escapeHtml(planStart)}</div>
+                          <div class="muted">やったよ：${escapeHtml(formatDateTime(r.recordedAt || r.createdAt))}</div>
                         </div>
                         <span class="record-result">${escapeHtml(resultLabel(r.result))}</span>
                       </div>
@@ -683,6 +738,7 @@ async function renderStats(panel) {
     </div>
   `);
   panel.appendChild(node);
+  bindPanelGear(node);
 
   if (isParent) {
     node.querySelector("#memberFilter").value = state.memberFilter;

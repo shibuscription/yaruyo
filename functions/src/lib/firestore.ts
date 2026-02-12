@@ -12,6 +12,9 @@ export type UserDoc = {
   appDisplayName: string | null;
   notifyActivityPlan: boolean;
   notifyActivityRecord: boolean;
+  notificationSettings?: {
+    startReminderEnabled?: boolean;
+  };
   familyId: string | null;
   createdAt: FirebaseFirestore.FieldValue | FirebaseFirestore.Timestamp;
   updatedAt: FirebaseFirestore.FieldValue | FirebaseFirestore.Timestamp;
@@ -20,4 +23,5 @@ export type UserDoc = {
 export const DEFAULT_USER_FLAGS = {
   notifyActivityPlan: true,
   notifyActivityRecord: true,
+  startReminderEnabled: true,
 } as const;

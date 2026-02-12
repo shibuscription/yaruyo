@@ -14,13 +14,15 @@ body {
 .topbar h1 {
   margin: 8px 0 16px;
   font-size: 22px;
+  display: none;
 }
 
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
+  min-height: 0;
 }
 
 .icon-btn {
@@ -42,6 +44,22 @@ body {
   border-radius: 12px;
   padding: 12px;
   margin-bottom: 10px;
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.panel-title-row h3 {
+  margin: 0;
+}
+
+.panel-settings-btn {
+  flex: 0 0 auto;
 }
 
 button {
@@ -75,12 +93,43 @@ input, select, textarea {
 }
 
 .amount-row {
-  align-items: start;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.amount-row > div:first-child {
+  flex: 1 1 auto;
+}
+
+.amount-row > div:last-child {
+  flex: 0 0 auto;
 }
 
 .label-placeholder {
   visibility: hidden;
   display: block;
+}
+
+.amount-type-toggle {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.amount-type-btn {
+  margin: 6px 0 10px;
+  background: #f0f4f2;
+  color: #204036;
+  border: 1px solid #c9d8d2;
+  white-space: nowrap;
+  min-width: 72px;
+}
+
+.amount-type-btn.active {
+  background: #1e7f5c;
+  color: #fff;
+  border-color: #1e7f5c;
 }
 
 .muted {
@@ -270,6 +319,13 @@ input, select, textarea {
 
 .section-value {
   min-width: 0;
+}
+
+.section-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .settings-page-header {

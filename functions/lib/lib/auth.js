@@ -22,6 +22,9 @@ export async function ensureUserDoc(uid) {
         appDisplayName: null,
         notifyActivityPlan: DEFAULT_USER_FLAGS.notifyActivityPlan,
         notifyActivityRecord: DEFAULT_USER_FLAGS.notifyActivityRecord,
+        notificationSettings: {
+            startReminderEnabled: DEFAULT_USER_FLAGS.startReminderEnabled,
+        },
         familyId: null,
         createdAt: SERVER_TIMESTAMP,
         updatedAt: SERVER_TIMESTAMP,

@@ -37,6 +37,7 @@ service cloud.firestore {
           "appDisplayName",
           "notifyActivityPlan",
           "notifyActivityRecord",
+          "notificationSettings",
           "updatedAt"
         ]);
       allow delete: if false;

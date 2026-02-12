@@ -6,4 +6,5 @@ export const SERVER_TIMESTAMP = FieldValue.serverTimestamp();
 export const DEFAULT_USER_FLAGS = {
     notifyActivityPlan: true,
     notifyActivityRecord: true,
+    startReminderEnabled: true,
 };
