@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "demo-yaruyo"
+    "default": "demo-yaruyo",
+    "prod": "yaruyo-dc015"
   }
 }

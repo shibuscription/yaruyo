@@ -30,7 +30,7 @@ import {
 const firebaseConfig = {
   apiKey: "AIzaSyAAtKF1zJnYtKVq5pWIaDb6VKtVbhFd_HA",
   authDomain: "yaruyo-dc015.firebaseapp.com",
-  projectId: "demo-yaruyo",
+  projectId: "yaruyo-dc015",
   storageBucket: "yaruyo-dc015.firebasestorage.app",
   messagingSenderId: "1020751568402",
   appId: "1:1020751568402:web:1cf789ca0847772be882cb",
@@ -42,13 +42,10 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 const functions = getFunctions(app, "asia-northeast1");
 
-// Local dev: run with Firebase emulators and auto anonymous auth.
-// Example: http://localhost:xxxx/ or http://127.0.0.1:xxxx/?mode=local
+// Local dev: use emulators only when `?mode=local` is present.
+// Example: http://localhost:3000/liff/index.html?mode=local
 const params = new URLSearchParams(location.search);
-const isLocal =
-  location.hostname === "localhost" ||
-  location.hostname === "127.0.0.1" ||
-  params.get("mode") === "local";
+const isLocal = params.get("mode") === "local";
 
 let emulatorsConnected = false;
 if (isLocal && !emulatorsConnected) {
@@ -56,14 +53,15 @@ if (isLocal && !emulatorsConnected) {
   connectFunctionsEmulator(functions, "127.0.0.1", 5001);
   connectFirestoreEmulator(db, "127.0.0.1", 8080);
   emulatorsConnected = true;
-  onAuthStateChanged(auth, (user) => {
-    if (!user) {
-      signInAnonymously(auth).catch((error) => {
-        console.error("Anonymous sign-in failed in local mode:", error);
-      });
-    }
-  });
 }
+
+onAuthStateChanged(auth, (user) => {
+  if (!user) {
+    signInAnonymously(auth).catch((error) => {
+      console.error("Anonymous sign-in failed:", error);
+    });
+  }
+});
 
 export function waitAuth() {
   return new Promise((resolve) => {

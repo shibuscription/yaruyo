@@ -55,6 +55,7 @@ let currentPanel = null;
 let liffProfile = null;
 let unsubscribeUser = null;
 let settingsModalState = null;
+let webMode = false;
 
 function el(html) {
   const t = document.createElement("template");
@@ -157,6 +158,7 @@ function startUserSubscription(uid) {
 }
 
 async function getLiffProfileSafe() {
+  if (webMode) return null;
   const liffApi = window.liff;
   if (!liffApi || typeof liffApi.getProfile !== "function") return null;
   if (typeof liffApi.isInClient === "function" && !liffApi.isInClient()) return null;
@@ -165,6 +167,37 @@ async function getLiffProfileSafe() {
   } catch {
     return null;
   }
+}
+
+async function initLiffOptional() {
+  const liffApi = window.liff;
+  if (!liffApi || typeof liffApi.init !== "function") {
+    webMode = true;
+    return;
+  }
+
+  const liffId = window.__LIFF_ID__ ?? window.LIFF_ID ?? params.get("liffId");
+  if (!liffId) {
+    webMode = true;
+    return;
+  }
+
+  try {
+    await liffApi.init({ liffId });
+    webMode = false;
+  } catch (error) {
+    console.warn("LIFF init failed. Fallback to web preview mode.", error);
+    webMode = true;
+  }
+}
+
+function ensureWebPreviewBanner() {
+  if (!webMode) return;
+  if (document.getElementById("web-preview-banner")) return;
+  const app = document.querySelector(".app");
+  if (!app) return;
+  const banner = el(`<div id="web-preview-banner" class="web-preview-banner">Webプレビューで動作中</div>`);
+  app.appendChild(banner);
 }
 
 async function syncLiffProfile(uid, me) {
@@ -214,6 +247,10 @@ function navigateToView(nextView) {
 }
 
 async function tryCloseLiffWindow() {
+  if (webMode) {
+    if (history.length > 1) history.back();
+    return;
+  }
   const liffApi = window.liff;
   if (liffApi && typeof liffApi.closeWindow === "function") {
     try {
@@ -353,6 +390,8 @@ function renderSettingsPage(panel) {
 }
 
 async function bootstrap() {
+  await initLiffOptional();
+  ensureWebPreviewBanner();
   const user = await waitAuth();
   if (!user) {
     root.innerHTML = `<div class="card">認証が必要です。</div>`;
