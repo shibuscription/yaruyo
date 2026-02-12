@@ -368,6 +368,31 @@ input, select, textarea {
   flex: 0 0 auto;
 }
 
+.invite-codes {
+  margin-top: 10px;
+}
+
+.invite-codes h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.invite-code-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.invite-code-row input {
+  margin: 0;
+}
+
+.invite-code-row button {
+  margin: 0;
+}
+
 .settings-modal-overlay {
   position: fixed;
   inset: 0;
@@ -416,4 +441,27 @@ input, select, textarea {
   padding: 4px 8px;
   font-size: 12px;
   z-index: 5;
+}
+
+.debug-panel {
+  margin-top: 10px;
+  border: 1px solid #f0cc8a;
+  background: #fff8e8;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.debug-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6f5b00;
+  margin-bottom: 6px;
+}
+
+.debug-pre {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

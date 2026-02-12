@@ -2,13 +2,16 @@ import {
   auth,
   createFamily,
   declarePlan,
+  ensureAnonymousAuth,
   getMyUser,
   getPlanById,
   joinFamilyByCode,
   listFamilyMembers,
+  listInviteCodes,
   listPlans,
   listRecords,
   recordPlan,
+  signInWithLineIdToken,
   subscribeMyUser,
   updateMySettings,
   upsertMyUserProfile,
@@ -30,6 +33,32 @@ const shouldBoot = normalizeLiffUrl();
 const root = document.getElementById("app-root");
 const params = new URLSearchParams(location.search);
 const view = ["declare", "record", "stats", "settings"].includes(params.get("view")) ? params.get("view") : null;
+const LIFF_ID = "2009111070-71hr5ID2";
+const ENABLE_DEBUG = false;
+
+function getHashParam(key) {
+  const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  const hashParams = new URLSearchParams(raw.startsWith("?") ? raw.slice(1) : raw);
+  return hashParams.get(key);
+}
+
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+const rawLiffState = ENABLE_DEBUG ? params.get("liff.state") ?? getHashParam("liff.state") : "";
+const decodedLiffState = ENABLE_DEBUG && rawLiffState ? safeDecodeURIComponent(rawLiffState) : "";
+const debugFromSearch = ENABLE_DEBUG && params.get("debug") === "1";
+const debugFromHash = ENABLE_DEBUG && (getHashParam("debug") === "1" || location.hash.includes("debug=1"));
+const debugFromLiffState =
+  ENABLE_DEBUG &&
+  (decodedLiffState.includes("debug=1") || (rawLiffState ? rawLiffState.includes("debug%3D1") : false));
+let debugEnabled = ENABLE_DEBUG && (debugFromSearch || debugFromHash || debugFromLiffState);
+const debugVersion = ENABLE_DEBUG ? (params.get("v") ?? getHashParam("v") ?? "") : "";
 
 const UI = {
   declareTitle: "やるよ",
@@ -56,11 +85,203 @@ let liffProfile = null;
 let unsubscribeUser = null;
 let settingsModalState = null;
 let webMode = false;
+let debugPanelEl = null;
+const globalState = window;
+
+const debugState = ENABLE_DEBUG
+  ? {
+  stage: "boot",
+  liffInit: "pending",
+  isInClient: "n/a",
+  isLoggedIn: "n/a",
+  context: null,
+  os: "n/a",
+  language: "n/a",
+  version: "n/a",
+  href: location.href,
+  userAgent: navigator.userAgent,
+  rawSearch: location.search || "(none)",
+  rawHash: location.hash || "(none)",
+  rawLiffState: rawLiffState ?? "(none)",
+  decodedLiffState: decodedLiffState || "(none)",
+  queryV: debugVersion || "(none)",
+  errorMessage: null,
+  errorStack: null,
+  firebaseUser: null,
+  firebaseClaims: null,
+}
+  : null;
 
 function el(html) {
   const t = document.createElement("template");
   t.innerHTML = html.trim();
   return t.content.firstElementChild;
+}
+
+function safeJson(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function setDebugError(error) {
+  if (!ENABLE_DEBUG || !debugState) return;
+  if (error instanceof Error) {
+    debugState.errorMessage = `${error.name}: ${error.message}`;
+    debugState.errorStack = error.stack ?? null;
+  } else {
+    debugState.errorMessage = String(error);
+    debugState.errorStack = null;
+  }
+  renderDebugPanel();
+}
+
+function clearDebugError() {
+  if (!ENABLE_DEBUG || !debugState) return;
+  debugState.errorMessage = null;
+  debugState.errorStack = null;
+  renderDebugPanel();
+}
+
+async function updateFirebaseAuthDebug(user) {
+  if (!ENABLE_DEBUG || !debugState) return;
+  if (!user) {
+    debugState.firebaseUser = null;
+    debugState.firebaseClaims = null;
+    renderDebugPanel();
+    return;
+  }
+
+  debugState.firebaseUser = {
+    uid: user.uid ?? null,
+    isAnonymous: user.isAnonymous ?? null,
+    providerData: Array.isArray(user.providerData)
+      ? user.providerData.map((p) => ({
+          providerId: p.providerId ?? null,
+          uid: p.uid ?? null,
+        }))
+      : [],
+    email: user.email ?? null,
+    displayName: user.displayName ?? null,
+    metadata: {
+      creationTime: user.metadata?.creationTime ?? null,
+      lastSignInTime: user.metadata?.lastSignInTime ?? null,
+    },
+  };
+
+  try {
+    const tokenResult = await user.getIdTokenResult();
+    const claims = tokenResult?.claims ?? {};
+    debugState.firebaseClaims = {
+      sub: claims.sub ?? null,
+      user_id: claims.user_id ?? null,
+      lineUserId: claims.lineUserId ?? null,
+      firebase: claims.firebase ?? null,
+    };
+  } catch (error) {
+    debugState.firebaseClaims = { error: error instanceof Error ? error.message : String(error) };
+  }
+
+  renderDebugPanel();
+}
+
+function renderDebugPanel() {
+  if (!ENABLE_DEBUG || !debugState || !debugEnabled) return;
+  const app = document.querySelector(".app");
+  if (!app) return;
+  if (!debugPanelEl) {
+    debugPanelEl = el(`<section id="debug-panel" class="debug-panel"></section>`);
+    app.appendChild(debugPanelEl);
+  }
+
+  const liffOk = debugState.isInClient === true ? "LIFF OK ✅" : "LIFF NG";
+  debugPanelEl.innerHTML = `
+    <div class="debug-title">Debug Panel (${liffOk})</div>
+    <pre class="debug-pre">${escapeHtml(
+      [
+        `stage: ${debugState.stage}`,
+        `liffInit: ${debugState.liffInit}`,
+        `liff.isInClient(): ${String(debugState.isInClient)}`,
+        `liff.isLoggedIn(): ${String(debugState.isLoggedIn)}`,
+        `liff.getOS(): ${String(debugState.os)}`,
+        `liff.getLanguage(): ${String(debugState.language)}`,
+        `liff.getVersion(): ${String(debugState.version)}`,
+        `query.v: ${debugState.queryV}`,
+        `raw location.search: ${debugState.rawSearch}`,
+        `raw location.hash: ${debugState.rawHash}`,
+        `raw liff.state: ${debugState.rawLiffState}`,
+        `decoded liff.state: ${debugState.decodedLiffState}`,
+        `location.href: ${debugState.href}`,
+        `navigator.userAgent: ${debugState.userAgent}`,
+        `liff.getContext(): ${safeJson(debugState.context)}`,
+        `firebaseUser: ${safeJson(debugState.firebaseUser)}`,
+        `firebaseClaims: ${safeJson(debugState.firebaseClaims)}`,
+        `errorMessage: ${debugState.errorMessage ?? "(none)"}`,
+        `errorStack: ${debugState.errorStack ?? "(none)"}`,
+      ].join("\n"),
+    )}</pre>
+  `;
+}
+
+function collectLiffDebug(stage, collectLiffApi = false) {
+  if (!ENABLE_DEBUG || !debugState) return;
+  debugState.stage = stage;
+  const liffApi = window.liff;
+  if (!liffApi) {
+    debugState.liffInit = "sdk-not-found";
+    debugState.isInClient = false;
+    debugState.isLoggedIn = false;
+    renderDebugPanel();
+    return;
+  }
+
+  if (!collectLiffApi) {
+    renderDebugPanel();
+    return;
+  }
+
+  try {
+    debugState.isInClient = typeof liffApi.isInClient === "function" ? liffApi.isInClient() : "unsupported";
+  } catch (error) {
+    debugState.isInClient = "error";
+    setDebugError(error);
+  }
+  try {
+    debugState.isLoggedIn = typeof liffApi.isLoggedIn === "function" ? liffApi.isLoggedIn() : "unsupported";
+  } catch (error) {
+    debugState.isLoggedIn = "error";
+    setDebugError(error);
+  }
+  try {
+    debugState.context = typeof liffApi.getContext === "function" ? liffApi.getContext() : null;
+    if (debugState.context && !debugEnabled) {
+      debugEnabled = true;
+    }
+  } catch (error) {
+    debugState.context = "error";
+    setDebugError(error);
+  }
+  try {
+    debugState.os = typeof liffApi.getOS === "function" ? liffApi.getOS() : "unsupported";
+  } catch (error) {
+    debugState.os = "error";
+    setDebugError(error);
+  }
+  try {
+    debugState.language = typeof liffApi.getLanguage === "function" ? liffApi.getLanguage() : "unsupported";
+  } catch (error) {
+    debugState.language = "error";
+    setDebugError(error);
+  }
+  try {
+    debugState.version = typeof liffApi.getVersion === "function" ? liffApi.getVersion() : "unsupported";
+  } catch (error) {
+    debugState.version = "error";
+    setDebugError(error);
+  }
+  renderDebugPanel();
 }
 
 function escapeHtml(text) {
@@ -170,24 +391,77 @@ async function getLiffProfileSafe() {
 }
 
 async function initLiffOptional() {
+  collectLiffDebug("before-liff-init");
   const liffApi = window.liff;
   if (!liffApi || typeof liffApi.init !== "function") {
     webMode = true;
+    if (debugState) debugState.liffInit = "skipped";
+    collectLiffDebug("liff-unavailable");
     return;
   }
 
-  const liffId = window.__LIFF_ID__ ?? window.LIFF_ID ?? params.get("liffId");
+  const liffId = LIFF_ID;
   if (!liffId) {
     webMode = true;
+    if (debugState) debugState.liffInit = "missing-liff-id";
+    collectLiffDebug("liff-missing-id");
     return;
+  }
+
+  if (globalState.__LIFF_INITIALIZED__) {
+    webMode = typeof liffApi.isInClient === "function" ? !liffApi.isInClient() : true;
+    if (debugState) debugState.liffInit = "already-initialized";
+    try {
+      collectLiffDebug("after-liff-init-ok", true);
+    } catch (error) {
+      setDebugError(error);
+    }
+    return;
+  }
+
+  if (globalState.__LIFF_INIT_PROMISE__) {
+    try {
+      await globalState.__LIFF_INIT_PROMISE__;
+      webMode = typeof liffApi.isInClient === "function" ? !liffApi.isInClient() : true;
+      if (debugState) debugState.liffInit = "already-initialized";
+      try {
+        collectLiffDebug("after-liff-init-ok", true);
+      } catch (error) {
+        setDebugError(error);
+      }
+      return;
+    } catch (error) {
+      globalState.__LIFF_INIT_PROMISE__ = null;
+      console.warn("LIFF init shared promise failed. Fallback to web preview mode.", error);
+      webMode = true;
+      if (debugState) debugState.liffInit = "failed";
+      setDebugError(error);
+      collectLiffDebug("after-liff-init-failed");
+      return;
+    }
   }
 
   try {
-    await liffApi.init({ liffId });
-    webMode = false;
+    globalState.__LIFF_INIT_PROMISE__ = liffApi.init({ liffId });
+    await globalState.__LIFF_INIT_PROMISE__;
+    globalState.__LIFF_INITIALIZED__ = true;
+    webMode = typeof liffApi.isInClient === "function" ? !liffApi.isInClient() : true;
+    if (debugState) debugState.liffInit = "ok";
+    try {
+      collectLiffDebug("after-liff-init-ok", true);
+    } catch (error) {
+      setDebugError(error);
+    }
   } catch (error) {
     console.warn("LIFF init failed. Fallback to web preview mode.", error);
     webMode = true;
+    if (debugState) debugState.liffInit = "failed";
+    setDebugError(error);
+    collectLiffDebug("after-liff-init-failed");
+  } finally {
+    if (!globalState.__LIFF_INITIALIZED__) {
+      globalState.__LIFF_INIT_PROMISE__ = null;
+    }
   }
 }
 
@@ -209,7 +483,11 @@ async function syncLiffProfile(uid, me) {
     updatedAt: new Date(),
   };
   if (!me?.displayName) payload.displayName = liffProfile.displayName ?? null;
-  await upsertMyUserProfile(uid, payload);
+  try {
+    await upsertMyUserProfile(uid, payload);
+  } catch (error) {
+    console.warn("Profile upsert skipped.", error);
+  }
 }
 
 function ceilToHalfHour(date) {
@@ -276,6 +554,16 @@ function panelTitleHtml(title, { showGear = true } = {}) {
   `;
 }
 
+function toUserErrorMessage(error) {
+  if (!error) return "参加に失敗しました。";
+  const message = String(error?.message ?? error);
+  if (message.includes("invalid") || message.includes("code")) return "招待コードが正しくありません。";
+  if (message.includes("already")) return "すでに家族に参加しています。";
+  if (message.includes("permission")) return "権限エラーで参加できませんでした。";
+  if (message.includes("unauth")) return "認証が必要です。";
+  return message;
+}
+
 function bindPanelGear(container) {
   const btn = container.querySelector(".panel-settings-btn");
   if (!btn) return;
@@ -283,6 +571,65 @@ function bindPanelGear(container) {
     if (!auth.currentUser) return;
     openSettingsModal();
   });
+}
+
+async function loadInviteCodesInto(wrapper) {
+  const section = wrapper.querySelector("#invite-codes-section");
+  const status = wrapper.querySelector("#invite-code-status");
+  const parentInput = wrapper.querySelector("#invite-parent-code");
+  const childInput = wrapper.querySelector("#invite-child-code");
+  const parentCopy = wrapper.querySelector("#copy-parent-code");
+  const childCopy = wrapper.querySelector("#copy-child-code");
+  if (!status || !parentInput || !childInput || !parentCopy || !childCopy) return;
+
+  if (!state.familyId) {
+    status.textContent = "家族未作成";
+    return;
+  }
+  if (state.role !== "parent") {
+    if (section) section.style.display = "none";
+    return;
+  }
+  try {
+    const codes = await listInviteCodes(state.familyId);
+    parentInput.value = codes.parent ?? "—";
+    childInput.value = codes.child ?? "—";
+    parentCopy.disabled = !codes.parent;
+    childCopy.disabled = !codes.child;
+    status.textContent = "";
+  } catch {
+    status.textContent = "取得できませんでした";
+  }
+}
+
+function bindCopyButton(button, input) {
+  button.addEventListener("click", async () => {
+    const code = input.value;
+    if (!code || code === "—") return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+        return;
+      }
+    } catch {
+      // fallback below
+    }
+    input.focus();
+    input.select();
+  });
+}
+
+async function ensureMyRole() {
+  if (!state.familyId || !auth.currentUser?.uid) return null;
+  if (state.role) return state.role;
+  try {
+    const members = await listFamilyMembers(state.familyId);
+    const me = members.find((m) => m.userId === auth.currentUser.uid) ?? null;
+    state.role = me?.role ?? null;
+  } catch {
+    state.role = null;
+  }
+  return state.role;
 }
 
 function createSettingsContent({ modal = false, showBack = false } = {}) {
@@ -317,8 +664,23 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
         </div>
         <div class="setting-toggle-row">
           <span>開始時刻リマインドを受け取る</span>
-          <input id="notifyStartReminder" type="checkbox" ${state.me.notificationSettings?.startReminderEnabled !== false ? "checked" : ""} />
+          <input id="notifyStartReminder" type="checkbox" ${state.me.notificationSettings?.startReminderEnabled === true ? "checked" : ""} />
         </div>
+        ${state.role === "parent" ? `
+        <div id="invite-codes-section" class="invite-codes">
+          <h4>家族招待コード</h4>
+          <div id="invite-code-status" class="muted"></div>
+          <div class="invite-code-row">
+            <span class="muted">親用</span>
+            <input id="invite-parent-code" readonly value="読み込み中..." />
+            <button type="button" id="copy-parent-code" class="secondary">コピー</button>
+          </div>
+          <div class="invite-code-row">
+            <span class="muted">子用</span>
+            <input id="invite-child-code" readonly value="読み込み中..." />
+            <button type="button" id="copy-child-code" class="secondary">コピー</button>
+          </div>
+        </div>` : ""}
         <button id="save-settings">保存する</button>
       </div>
     </div>
@@ -348,6 +710,12 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
     alert("保存しました。");
   };
 
+  if (state.role === "parent") {
+    bindCopyButton(wrapper.querySelector("#copy-parent-code"), wrapper.querySelector("#invite-parent-code"));
+    bindCopyButton(wrapper.querySelector("#copy-child-code"), wrapper.querySelector("#invite-child-code"));
+    loadInviteCodesInto(wrapper);
+  }
+
   return wrapper;
 }
 
@@ -358,8 +726,9 @@ function closeSettingsModal() {
   settingsModalState = null;
 }
 
-function openSettingsModal() {
+async function openSettingsModal() {
   if (settingsModalState) return;
+  await ensureMyRole();
   const overlay = el(`
     <div class="settings-modal-overlay">
       <div class="settings-modal-card">
@@ -386,17 +755,46 @@ function openSettingsModal() {
 
 function renderSettingsPage(panel) {
   panel.innerHTML = "";
-  panel.appendChild(createSettingsContent({ modal: false, showBack: true }));
+  ensureMyRole().then(() => {
+    panel.innerHTML = "";
+    panel.appendChild(createSettingsContent({ modal: false, showBack: true }));
+  });
 }
 
 async function bootstrap() {
+  renderDebugPanel();
   await initLiffOptional();
   ensureWebPreviewBanner();
+
+  if (webMode) {
+    collectLiffDebug("webmode-anon-auth");
+    await ensureAnonymousAuth();
+  } else {
+    const liffApi = window.liff;
+    if (!liffApi || typeof liffApi.isLoggedIn !== "function") {
+      throw new Error("LIFF SDK is unavailable.");
+    }
+    if (!liffApi.isLoggedIn()) {
+      collectLiffDebug("liff-login-redirect");
+      liffApi.login({ redirectUri: location.href });
+      return;
+    }
+    const idToken = typeof liffApi.getIDToken === "function" ? liffApi.getIDToken() : null;
+    if (!idToken) {
+      throw new Error("LIFF ID token is unavailable.");
+    }
+    collectLiffDebug("liff-exchange-token");
+    await signInWithLineIdToken(idToken, LIFF_ID.split("-")[0]);
+  }
+
   const user = await waitAuth();
+  collectLiffDebug("after-firebase-auth");
+  await updateFirebaseAuthDebug(user);
   if (!user) {
     root.innerHTML = `<div class="card">認証が必要です。</div>`;
     return;
   }
+  clearDebugError();
   let me = await getMyUser(user.uid);
   await syncLiffProfile(user.uid, me);
   me = await getMyUser(user.uid);
@@ -419,28 +817,75 @@ function renderOnboarding() {
     <div>
       <div class="card">
         <h3>家族を作成</h3>
-        <button id="create-family">作成する</button>
+        <button id="create-family" type="button">作成する</button>
       </div>
       <div class="card">
         <h3>コードで参加</h3>
         <input id="join-code" placeholder="6桁コード" maxlength="6" />
-        <button id="join-family">参加する</button>
+        <button id="join-family" type="button">参加する</button>
+        <div id="join-status" class="muted"></div>
       </div>
     </div>
   `;
-  root.querySelector("#create-family").onclick = async () => {
-    await createFamily();
-    const me = await getMyUser(auth.currentUser.uid);
-    state.familyId = me.familyId;
-    await render();
-  };
-  root.querySelector("#join-family").onclick = async () => {
-    const code = root.querySelector("#join-code").value;
-    await joinFamilyByCode(code);
-    const me = await getMyUser(auth.currentUser.uid);
-    state.familyId = me.familyId;
-    await render();
-  };
+  const createBtn = root.querySelector("#create-family");
+  const joinBtn = root.querySelector("#join-family");
+  const codeInput = root.querySelector("#join-code");
+  const status = root.querySelector("#join-status");
+
+  createBtn.addEventListener("click", async () => {
+    createBtn.disabled = true;
+    const original = createBtn.textContent;
+    createBtn.textContent = "作成中...";
+    try {
+      await createFamily();
+      const me = await getMyUser(auth.currentUser.uid);
+      state.familyId = me.familyId;
+      await render();
+    } catch (error) {
+      console.error("createFamily failed", error);
+      alert(toUserErrorMessage(error));
+    } finally {
+      createBtn.disabled = false;
+      createBtn.textContent = original;
+    }
+  });
+
+  joinBtn.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const code = (codeInput.value || "").trim();
+    if (!code) {
+      status.textContent = "コードを入力してね";
+      alert("コードを入力してね");
+      return;
+    }
+    joinBtn.disabled = true;
+    const original = joinBtn.textContent;
+    joinBtn.textContent = "参加中...";
+    status.textContent = "参加中...";
+    try {
+      const result = await joinFamilyByCode(code);
+      status.textContent = result?.ok ? "参加しました" : "参加処理を実行しました";
+      state.familyId = result?.familyId ?? state.familyId;
+      state.role = result?.role ?? state.role;
+      for (let i = 0; i < 3; i += 1) {
+        const me = await getMyUser(auth.currentUser.uid);
+        if (me?.familyId) {
+          state.familyId = me.familyId;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      navigateToView("declare");
+    } catch (error) {
+      console.error("joinFamilyByCode failed", error);
+      const message = toUserErrorMessage(error);
+      status.textContent = message;
+      alert(message);
+    } finally {
+      joinBtn.disabled = false;
+      joinBtn.textContent = original;
+    }
+  });
 }
 
 async function renderHome() {
@@ -728,7 +1173,13 @@ async function fillPlanDetail(overlay, record) {
 
 async function renderStats(panel) {
   panel.innerHTML = "";
-  const members = await listFamilyMembers(state.familyId);
+  let members;
+  try {
+    members = await listFamilyMembers(state.familyId);
+  } catch (error) {
+    console.error("Query failed: listFamilyMembers", { familyId: state.familyId, error });
+    throw error;
+  }
   const userMap = new Map(members.map((m) => [m.userId, m]));
   userMap.set(state.me.uid, { ...state.me, userId: state.me.uid });
 
@@ -737,8 +1188,20 @@ async function renderStats(panel) {
   const memberOptions = [`<option value="all">全員</option>`]
     .concat(members.map((m) => `<option value="${m.userId}">${getEffectiveDisplayName(m, m.userId)}</option>`))
     .join("");
-  const records = await listRecords(state.familyId, auth.currentUser.uid, isParent, state.memberFilter, 20);
-  const plans = await listPlans(state.familyId, auth.currentUser.uid, isParent, 200);
+  let records;
+  try {
+    records = await listRecords(state.familyId, auth.currentUser.uid, isParent, state.memberFilter, 20);
+  } catch (error) {
+    console.error("Query failed: listRecords", { familyId: state.familyId, isParent, error });
+    throw error;
+  }
+  let plans;
+  try {
+    plans = await listPlans(state.familyId, auth.currentUser.uid, isParent, 200);
+  } catch (error) {
+    console.error("Query failed: listPlans", { familyId: state.familyId, isParent, error });
+    throw error;
+  }
   const planMap = new Map(plans.map((p) => [p.id, p]));
   const node = el(`
     <div class="card">
@@ -799,8 +1262,16 @@ async function renderStats(panel) {
   });
 }
 
+function bootstrapOnce() {
+  if (!globalState.__YARUYO_BOOTSTRAP_PROMISE__) {
+    globalState.__YARUYO_BOOTSTRAP_PROMISE__ = bootstrap();
+  }
+  return globalState.__YARUYO_BOOTSTRAP_PROMISE__;
+}
+
 if (shouldBoot) {
-  bootstrap().catch((e) => {
+  bootstrapOnce().catch((e) => {
+    setDebugError(e);
     root.innerHTML = `<div class="card">初期化エラー: ${e.message}</div>`;
   });
 }

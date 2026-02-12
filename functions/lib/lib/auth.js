@@ -12,7 +12,23 @@ export async function ensureUserDoc(uid) {
     const ref = db.doc(`users/${uid}`);
     const snap = await ref.get();
     if (snap.exists) {
-        await ref.update({ updatedAt: SERVER_TIMESTAMP });
+        const data = snap.data() ?? {};
+        const patch = {
+            updatedAt: SERVER_TIMESTAMP,
+        };
+        if (typeof data.notifyActivityPlan !== "boolean") {
+            patch.notifyActivityPlan = DEFAULT_USER_FLAGS.notifyActivityPlan;
+        }
+        if (typeof data.notifyActivityRecord !== "boolean") {
+            patch.notifyActivityRecord = DEFAULT_USER_FLAGS.notifyActivityRecord;
+        }
+        if (typeof data.notificationSettings?.startReminderEnabled !== "boolean") {
+            patch.notificationSettings = {
+                ...(data.notificationSettings ?? {}),
+                startReminderEnabled: DEFAULT_USER_FLAGS.startReminderEnabled,
+            };
+        }
+        await ref.set(patch, { merge: true });
         return;
     }
     const authUser = await getAuthUser(uid);

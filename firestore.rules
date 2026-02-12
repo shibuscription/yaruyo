@@ -9,6 +9,16 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == userId;
     }
 
+    function myUserDocPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function myFamilyId() {
+      return signedIn() && exists(myUserDocPath())
+        ? get(myUserDocPath()).data.familyId
+        : null;
+    }
+
     function memberDoc(familyId, uid) {
       return /databases/$(database)/documents/families/$(familyId)/members/$(uid);
     }
@@ -29,8 +39,15 @@ service cloud.firestore {
       return isParent(familyId) || (isMember(familyId) && isSelf(ownerUserId));
     }
 
+    function canReadUser(userId) {
+      return isSelf(userId)
+        || (signedIn()
+          && myFamilyId() != null
+          && exists(memberDoc(myFamilyId(), userId)));
+    }
+
     match /users/{userId} {
-      allow read: if isSelf(userId);
+      allow read: if canReadUser(userId);
       allow create: if false;
       allow update: if isSelf(userId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -53,7 +70,7 @@ service cloud.firestore {
       }
 
       match /inviteCodes/{code} {
-        allow read: if isMember(familyId);
+        allow read: if isParent(familyId);
         allow create, update, delete: if false;
       }
     }

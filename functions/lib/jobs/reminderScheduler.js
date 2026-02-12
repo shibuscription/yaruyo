@@ -49,7 +49,7 @@ export const reminderScheduler = onSchedule({
         const dedupeKey = `start_reminder:${recipientId}:${planId}`;
         const logId = logDocIdFromDedupeKey(dedupeKey);
         const userSnap = await db.doc(`users/${recipientId}`).get();
-        const startReminderEnabled = userSnap.data()?.notificationSettings?.startReminderEnabled !== false;
+        const startReminderEnabled = userSnap.data()?.notificationSettings?.startReminderEnabled === true;
         if (!startReminderEnabled) {
             continue;
         }

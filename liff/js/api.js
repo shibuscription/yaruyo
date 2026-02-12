@@ -55,13 +55,11 @@ if (isLocal && !emulatorsConnected) {
   emulatorsConnected = true;
 }
 
-onAuthStateChanged(auth, (user) => {
-  if (!user) {
-    signInAnonymously(auth).catch((error) => {
-      console.error("Anonymous sign-in failed:", error);
-    });
-  }
-});
+export async function ensureAnonymousAuth() {
+  if (auth.currentUser) return auth.currentUser;
+  await signInAnonymously(auth);
+  return auth.currentUser;
+}
 
 export function waitAuth() {
   return new Promise((resolve) => {
@@ -74,6 +72,16 @@ export function waitAuth() {
 
 export async function devSignIn(customToken) {
   await signInWithCustomToken(auth, customToken);
+}
+
+export async function signInWithLineIdToken(idToken, channelId) {
+  const res = await httpsCallable(functions, "exchangeLineIdToken")({ idToken, channelId });
+  const customToken = res?.data?.customToken;
+  if (!customToken) {
+    throw new Error("LINE custom token exchange failed.");
+  }
+  await signInWithCustomToken(auth, customToken);
+  return res.data;
 }
 
 export async function getMyUser(uid) {
@@ -143,6 +151,17 @@ export async function listFamilyMembers(familyId) {
     }),
   );
   return members;
+}
+
+export async function listInviteCodes(familyId) {
+  const snap = await getDocs(collection(db, `families/${familyId}/inviteCodes`));
+  const result = { parent: null, child: null };
+  snap.docs.forEach((d) => {
+    const data = d.data();
+    if (data?.role === "parent") result.parent = d.id;
+    if (data?.role === "child") result.child = d.id;
+  });
+  return result;
 }
 
 export async function updateMySettings(uid, payload) {

@@ -1,11 +1,17 @@
 import { logger } from "firebase-functions";
 import { db, SERVER_TIMESTAMP } from "./firestore.js";
-const CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "";
+function getLineEnv() {
+    return {
+        channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN ?? "",
+        channelSecret: process.env.LINE_CHANNEL_SECRET ?? "",
+    };
+}
 export function logDocIdFromDedupeKey(dedupeKey) {
     return dedupeKey.replace(/\//g, "_");
 }
 export async function sendLinePush({ to, message }) {
-    if (!CHANNEL_ACCESS_TOKEN) {
+    const { channelAccessToken } = getLineEnv();
+    if (!channelAccessToken) {
         logger.warn("LINE_CHANNEL_ACCESS_TOKEN is not set. Skip push.", { to, message });
         return;
     }
@@ -13,7 +19,7 @@ export async function sendLinePush({ to, message }) {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}`,
+            Authorization: `Bearer ${channelAccessToken}`,
         },
         body: JSON.stringify({
             to,

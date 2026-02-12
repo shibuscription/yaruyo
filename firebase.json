@@ -9,6 +9,16 @@
       "**/.*",
       "**/node_modules/**",
       "functions/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/liff",
+        "destination": "/liff/index.html"
+      },
+      {
+        "source": "/liff/**",
+        "destination": "/liff/index.html"
+      }
     ]
   },
   "firestore": {
