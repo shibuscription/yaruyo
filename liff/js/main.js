@@ -49,6 +49,8 @@ const SETTINGS_DEBUG = params.get("debug") === "1";
 const LIFF_ID = "2009111070-71hr5ID2";
 const ENABLE_DEBUG = false;
 const ENABLE_DEBUG_LOG_UPLOAD = false;
+let buildIdText = "unknown";
+let buildIdBadgeEl = null;
 
 function getHashParam(key) {
   const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
@@ -129,6 +131,28 @@ function phaseLog(phase, detail = undefined) {
   currentBootPhase = phase;
   if (detail !== undefined) console.info(`[BOOT] ${phase}`, detail);
   else console.info(`[BOOT] ${phase}`);
+}
+
+function ensureBuildIdBadge() {
+  if (buildIdBadgeEl) {
+    buildIdBadgeEl.textContent = `build: ${buildIdText || "unknown"}`;
+    return;
+  }
+  buildIdBadgeEl = el(`<div class="build-id-badge"></div>`);
+  buildIdBadgeEl.textContent = `build: ${buildIdText || "unknown"}`;
+  document.body.appendChild(buildIdBadgeEl);
+}
+
+async function loadBuildId() {
+  try {
+    const mod = await import("./buildId.js");
+    if (typeof mod?.BUILD_ID === "string" && mod.BUILD_ID.trim()) {
+      buildIdText = mod.BUILD_ID.trim();
+    }
+  } catch {
+    buildIdText = "unknown";
+  }
+  ensureBuildIdBadge();
 }
 
 async function uploadDebugLogIfEnabled(type, payload = {}) {
@@ -863,7 +887,6 @@ function showConfirmModal({
     const overlay = el(`
       <div class="modal-overlay">
         <div class="modal-card confirm-modal-card">
-          <button class="modal-close" aria-label="close">&times;</button>
           <div class="confirm-modal-body">
             <h3 class="confirm-modal-title">${escapeHtml(title)}</h3>
             <div class="confirm-modal-message">${escapeHtml(message)}</div>
@@ -880,21 +903,12 @@ function showConfirmModal({
     const close = (result) => {
       if (settled) return;
       settled = true;
-      document.removeEventListener("keydown", onKeyDown);
       overlay.remove();
       resolve(result);
     };
-    const onKeyDown = (e) => {
-      if (e.key === "Escape") close(false);
-    };
 
-    overlay.querySelector(".modal-close").onclick = () => close(false);
     overlay.querySelector("#confirm-cancel").onclick = () => close(false);
     overlay.querySelector("#confirm-ok").onclick = () => close(true);
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay) close(false);
-    });
-    document.addEventListener("keydown", onKeyDown);
     document.body.appendChild(overlay);
   });
 }
@@ -2075,6 +2089,7 @@ function bootstrapOnce() {
 }
 
 if (shouldBoot) {
+  loadBuildId();
   registerGlobalErrorHandlers();
   showLoadingBanner();
   bootstrapOnce().catch((e) => {

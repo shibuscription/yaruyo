@@ -17,6 +17,7 @@ const LIFF_ID = process.env.LIFF_ID;
 const RICHMENU_IMAGE_PATH = process.env.RICHMENU_IMAGE_PATH;
 const YARUYO_BUILD_ID = process.env.YARUYO_BUILD_ID;
 const CLI_BUILD_ID = (process.argv[2] || "").trim();
+const BUILD_ID_FILE_PATH = path.resolve(__dirname, "../liff/js/buildId.js");
 
 function requireEnv(name, value) {
   if (!value) {
@@ -44,6 +45,17 @@ function buildIdNow() {
   const mm = pad2(d.getMinutes());
   const ss = pad2(d.getSeconds());
   return `${y}${m}${day}-${hh}${mm}${ss}`;
+}
+
+function readBuildIdFromFile() {
+  if (!fs.existsSync(BUILD_ID_FILE_PATH)) return "";
+  try {
+    const source = fs.readFileSync(BUILD_ID_FILE_PATH, "utf8");
+    const m = source.match(/BUILD_ID\s*=\s*["']([^"']+)["']/);
+    return m?.[1]?.trim() || "";
+  } catch {
+    return "";
+  }
 }
 
 function buildLiffUrl(view, buildId) {
@@ -81,7 +93,8 @@ async function main() {
   if (!fs.existsSync(RICHMENU_IMAGE_PATH)) {
     throw new Error(`Image file not found: ${RICHMENU_IMAGE_PATH}`);
   }
-  const buildId = CLI_BUILD_ID || YARUYO_BUILD_ID || buildIdNow();
+  const fileBuildId = readBuildIdFromFile();
+  const buildId = CLI_BUILD_ID || YARUYO_BUILD_ID || fileBuildId || buildIdNow();
   console.log(`Using build id: ${buildId}`);
 
   const richMenuRequest = {

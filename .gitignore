@@ -71,3 +71,6 @@ node_modules/
 scripts/.env
 scripts/.env.*
 !scripts/.env.prod.example
+
+# generated build id
+/liff/js/buildId.js

@@ -230,6 +230,13 @@ firebase deploy --only functions\
 firebase deploy --only firestore:rules\
 firebase deploy --only firestore:indexes
 
+npm scripts（推奨）:
+
+- `npm run deploy:hosting`（Hostingデプロイ時のみ buildId 更新 + RichMenu更新）
+- `npm run deploy:functions`（Functionsのみ。buildIdは更新しない）
+- `npm run deploy:rules`（Rulesのみ。buildIdは更新しない）
+- `npm run deploy:all`（全体デプロイ + buildId更新 + RichMenu更新）
+
 ※ Functions の環境変数は `functions/.env`（ローカル）/ `functions/.env.<alias>`（本番）を使用（`functions.config()` は不使用）。
 
 ### Hostingキャッシュ方針（重要）
@@ -251,8 +258,12 @@ firebase deploy --only firestore:indexes
 
 実行:
 
-- `node scripts/createRichMenu.js`（build id 自動生成）
+- `node scripts/createRichMenu.js`（`liff/js/buildId.js` → env → 自動生成の順で buildId 解決）
 - `node scripts/createRichMenu.js 20260214-1`（CLI引数で build id 指定）
+
+buildIdファイル更新のみ:
+
+- `node scripts/genBuildId.js`（JST `YYYYMMDD-HHmm` + git short sha）
 
 推奨運用順:
 
