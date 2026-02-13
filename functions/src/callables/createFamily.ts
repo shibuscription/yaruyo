@@ -19,8 +19,14 @@ export const createFamily = onCall({ region: "asia-northeast1" }, async (request
       const userSnap = await tx.get(userRef);
       const userFamilyId = (userSnap.data()?.familyId as string | null) ?? null;
       assertSingleFamily(userFamilyId);
+      const userData = (userSnap.data() as Record<string, unknown>) ?? {};
+      const displayName = typeof userData.displayName === "string" ? userData.displayName.trim() : "";
+      const appDisplayName = typeof userData.appDisplayName === "string" ? userData.appDisplayName.trim() : "";
+      const lineDisplayName = typeof userData.lineDisplayName === "string" ? userData.lineDisplayName.trim() : "";
+      const createdByDisplayName = displayName || appDisplayName || lineDisplayName || uid;
 
       tx.set(db.doc(`families/${familyId}`), {
+        name: `${createdByDisplayName}の家族`,
         createdBy: uid,
         createdAt: SERVER_TIMESTAMP,
         updatedAt: SERVER_TIMESTAMP,

@@ -166,6 +166,14 @@ export async function recordPlan(planId, result, memo = null) {
   return (await httpsCallable(functions, "recordPlan")({ planId, result, memo })).data;
 }
 
+export async function leaveFamily() {
+  return (await httpsCallable(functions, "leaveFamily")({})).data;
+}
+
+export async function updateFamilyName(name) {
+  return (await httpsCallable(functions, "updateFamilyName")({ name })).data;
+}
+
 export async function listPlans(familyId, uid, isParent, limitCount = 10) {
   const base = [where("familyId", "==", familyId), orderBy("createdAt", "desc"), limit(limitCount)];
   const q = isParent
@@ -244,6 +252,11 @@ export async function listFamilyMembers(familyId) {
     }),
   );
   return members;
+}
+
+export async function getFamily(familyId) {
+  const snap = await getDoc(doc(db, "families", familyId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
 export async function listInviteCodes(familyId) {

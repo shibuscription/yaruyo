@@ -4,9 +4,11 @@
   createFamily,
   declarePlan,
   ensureAnonymousAuth,
+  getFamily,
   getMyUser,
   getPlanById,
   joinFamilyByCode,
+  leaveFamily,
   listFamilyMembers,
   listInviteCodes,
   listOpenPlansPage,
@@ -16,6 +18,7 @@
   recordPlan,
   signInWithLineIdToken,
   subscribeMyUser,
+  updateFamilyName,
   updateMySettings,
   upsertMyLineProfile,
   waitAuth,
@@ -101,8 +104,11 @@ let currentPanel = null;
 let liffProfile = null;
 let unsubscribeUser = null;
 let settingsModalState = null;
+let familyModalState = null;
 let webMode = false;
 let debugPanelEl = null;
+let avatarErrorHandlerRegistered = false;
+let confirmModalOpen = false;
 const globalState = window;
 let currentBootPhase = "BOOT";
 let loadingBannerEl = null;
@@ -509,20 +515,83 @@ function resultLabel(value) {
   return value ?? UI.placeholder;
 }
 
-function getEffectiveDisplayName(user, fallbackUid) {
-  return user?.displayName ?? user?.appDisplayName ?? liffProfile?.displayName ?? fallbackUid;
+function getEffectiveDisplayName(user, fallbackUid, { allowLiffFallback = false } = {}) {
+  const displayName = typeof user?.displayName === "string" ? user.displayName.trim() : "";
+  if (displayName) return displayName;
+  const appDisplayName = typeof user?.appDisplayName === "string" ? user.appDisplayName.trim() : "";
+  if (appDisplayName) return appDisplayName;
+  const lineDisplayName = typeof user?.lineDisplayName === "string" ? user.lineDisplayName.trim() : "";
+  if (lineDisplayName) return lineDisplayName;
+  if (allowLiffFallback) {
+    const liffName = typeof liffProfile?.displayName === "string" ? liffProfile.displayName.trim() : "";
+    if (liffName) return liffName;
+  }
+  return fallbackUid;
 }
 
 function getPictureUrl(user) {
   return typeof user?.pictureUrl === "string" && user.pictureUrl ? user.pictureUrl : null;
 }
 
-function avatarHtml(user, alt = "avatar") {
-  const url = getPictureUrl(user);
-  if (url) {
-    return `<span class="avatar"><img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" /></span>`;
+function hashString(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
   }
-  return `<span class="avatar avatar-fallback" aria-label="${escapeHtml(alt)}"></span>`;
+  return hash;
+}
+
+function avatarFallbackData(user, fallbackUid = "") {
+  const uid = (user?.uid ?? user?.userId ?? fallbackUid ?? "").toString();
+  const displayName = (getEffectiveDisplayName(user, uid) || "ユーザー").trim();
+  const initial = displayName.slice(0, 1) || "U";
+  const hue = hashString(uid || displayName) % 360;
+  return {
+    uid,
+    initial,
+    bg: `hsl(${hue}, 65%, 55%)`,
+  };
+}
+
+function avatarHtml(user, alt = "avatar", fallbackUid = "") {
+  const url = getPictureUrl(user);
+  const fallback = avatarFallbackData(user, fallbackUid);
+  if (url) {
+    return `
+      <span class="avatar has-image" style="--avatar-bg:${fallback.bg};" aria-label="${escapeHtml(alt)}">
+        <span class="avatar-fallback-text" aria-hidden="true">${escapeHtml(fallback.initial)}</span>
+        <img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" data-avatar-img="1" />
+      </span>
+    `;
+  }
+  return `
+    <span class="avatar avatar-fallback-only" style="--avatar-bg:${fallback.bg};" aria-label="${escapeHtml(alt)}">
+      <span class="avatar-fallback-text" aria-hidden="true">${escapeHtml(fallback.initial)}</span>
+    </span>
+  `;
+}
+
+function handleAvatarImageError(img) {
+  if (!img || img.dataset.avatarErrorHandled === "1") return;
+  img.dataset.avatarErrorHandled = "1";
+  const host = img.closest(".avatar.has-image");
+  if (host) host.classList.add("avatar-img-error");
+  img.remove();
+}
+
+function ensureAvatarErrorHandler() {
+  if (avatarErrorHandlerRegistered) return;
+  avatarErrorHandlerRegistered = true;
+  document.addEventListener(
+    "error",
+    (event) => {
+      const img = event.target;
+      if (!(img instanceof HTMLImageElement)) return;
+      if (!img.matches("img[data-avatar-img]")) return;
+      handleAvatarImageError(img);
+    },
+    true,
+  );
 }
 
 function refreshHeaderView() {
@@ -531,7 +600,7 @@ function refreshHeaderView() {
   const avatar = header.querySelector(".header-avatar");
   const name = header.querySelector(".header-name");
   if (avatar) avatar.innerHTML = avatarHtml(state.me, "me");
-  if (name) name.textContent = getEffectiveDisplayName(state.me, state.me.uid);
+  if (name) name.textContent = getEffectiveDisplayName(state.me, state.me.uid, { allowLiffFallback: true });
 }
 
 function startUserSubscription(uid) {
@@ -883,9 +952,13 @@ function showConfirmModal({
   okText = "OK",
   cancelText = "キャンセル",
 } = {}) {
+  if (confirmModalOpen) {
+    return Promise.resolve(false);
+  }
+  confirmModalOpen = true;
   return new Promise((resolve) => {
     const overlay = el(`
-      <div class="modal-overlay">
+      <div class="modal-overlay confirm-overlay">
         <div class="modal-card confirm-modal-card">
           <div class="confirm-modal-body">
             <h3 class="confirm-modal-title">${escapeHtml(title)}</h3>
@@ -903,6 +976,7 @@ function showConfirmModal({
     const close = (result) => {
       if (settled) return;
       settled = true;
+      confirmModalOpen = false;
       overlay.remove();
       resolve(result);
     };
@@ -998,6 +1072,23 @@ function bindCopyButton(button, input) {
   });
 }
 
+function bindCopyValueButton(button, valueProvider) {
+  button.addEventListener("click", async () => {
+    const value = valueProvider();
+    if (!value || value === "—") return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        await showToast("コピーしました");
+        return;
+      }
+    } catch {
+      // fallback below
+    }
+    await showToast("コピーに対応していません");
+  });
+}
+
 async function ensureMyRole() {
   if (!state.familyId || !auth.currentUser?.uid) return null;
   if (state.role) return state.role;
@@ -1011,8 +1102,20 @@ async function ensureMyRole() {
   return state.role;
 }
 
-function createSettingsContent({ modal = false, showBack = false } = {}) {
-  const displayNameForInput = state.me?.displayName ?? state.me?.appDisplayName ?? liffProfile?.displayName ?? "";
+async function resolveCurrentFamilyName() {
+  if (!state.familyId) return "-";
+  try {
+    const family = await getFamily(state.familyId);
+    const name = typeof family?.name === "string" ? family.name.trim() : "";
+    return name || "-";
+  } catch {
+    return "-";
+  }
+}
+
+function createSettingsContent({ modal = false, showBack = false, familyName = "-" } = {}) {
+  const displayNameForInput =
+    state.me?.displayName ?? state.me?.appDisplayName ?? state.me?.lineDisplayName ?? liffProfile?.displayName ?? "";
   const displayNameForHeader = displayNameForInput || "ユーザー";
   const uidText = state.me?.uid ?? "";
 
@@ -1032,7 +1135,7 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
               uidText
                 ? `
                   <div class="uid-row">
-                    <span class="muted uid-text">UID: ${escapeHtml(formatUid(uidText))}</span>
+                    <span class="muted uid-short">UID: ${escapeHtml(formatUid(uidText))}</span>
                     <button type="button" id="copy-uid-btn" class="secondary uid-copy-btn">コピー</button>
                   </div>
                   <div id="uid-copy-status" class="muted uid-copy-status" aria-live="polite"></div>
@@ -1040,6 +1143,7 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
                 `
                 : ""
             }
+            <a href="#" id="open-family-modal-link" class="settings-family-link-text">家族：${escapeHtml(familyName || "-")}</a>
           </div>
         </div>
         ${SETTINGS_DEBUG ? `<div id="settings-avatar-debug" class="muted"></div>` : ""}
@@ -1057,21 +1161,6 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
           <span>開始時刻リマインドを受け取る</span>
           <input id="notifyStartReminder" type="checkbox" ${state.me.notificationSettings?.startReminderEnabled === true ? "checked" : ""} />
         </div>
-        ${state.role === "parent" ? `
-        <div id="invite-codes-section" class="invite-codes">
-          <h4>家族招待コード</h4>
-          <div id="invite-code-status" class="muted"></div>
-          <div class="invite-code-row">
-            <span class="muted">親用</span>
-            <input id="invite-parent-code" readonly value="読み込み中..." />
-            <button type="button" id="copy-parent-code" class="secondary">コピー</button>
-          </div>
-          <div class="invite-code-row">
-            <span class="muted">子用</span>
-            <input id="invite-child-code" readonly value="読み込み中..." />
-            <button type="button" id="copy-child-code" class="secondary">コピー</button>
-          </div>
-        </div>` : ""}
         ${SETTINGS_DEBUG ? `<div id="settings-debug-panel" class="card"></div>` : ""}
         <button id="save-settings">保存する</button>
       </div>
@@ -1101,7 +1190,8 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
       const me = await getMyUser(auth.currentUser.uid);
       state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
       refreshHeaderView();
-      const nextName = state.me?.displayName ?? state.me?.appDisplayName ?? liffProfile?.displayName ?? "";
+      const nextName =
+        state.me?.displayName ?? state.me?.appDisplayName ?? state.me?.lineDisplayName ?? liffProfile?.displayName ?? "";
       wrapper.querySelector("#displayName").value = nextName;
       const titleName = wrapper.querySelector(".settings-user-card .profile-name");
       if (titleName) titleName.textContent = nextName || "ユーザー";
@@ -1112,11 +1202,6 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
     }
   };
 
-  if (state.role === "parent") {
-    bindCopyButton(wrapper.querySelector("#copy-parent-code"), wrapper.querySelector("#invite-parent-code"));
-    bindCopyButton(wrapper.querySelector("#copy-child-code"), wrapper.querySelector("#invite-child-code"));
-    loadInviteCodesInto(wrapper);
-  }
   const uidCopyBtn = wrapper.querySelector("#copy-uid-btn");
   if (uidCopyBtn && uidText) {
     uidCopyBtn.addEventListener("click", async () => {
@@ -1139,6 +1224,14 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
       }
     });
   }
+  const familyLink = wrapper.querySelector("#open-family-modal-link");
+  if (familyLink) {
+    familyLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      closeSettingsModal();
+      await openFamilyModal();
+    });
+  }
   bindSettingsAvatarDebug(wrapper);
   loadSettingsDebugInfo(wrapper);
 
@@ -1154,7 +1247,9 @@ function closeSettingsModal() {
 
 async function openSettingsModal() {
   if (settingsModalState) return;
+  if (familyModalState) closeFamilyModal();
   await ensureMyRole();
+  const familyName = await resolveCurrentFamilyName();
   const overlay = el(`
     <div class="settings-modal-overlay">
       <div class="settings-modal-card">
@@ -1164,7 +1259,7 @@ async function openSettingsModal() {
     </div>
   `);
   const body = overlay.querySelector(".settings-modal-body");
-  body.appendChild(createSettingsContent({ modal: true, showBack: false }));
+  body.appendChild(createSettingsContent({ modal: true, showBack: false, familyName }));
   const onKeyDown = (e) => {
     if (e.key === "Escape") closeSettingsModal();
   };
@@ -1179,11 +1274,225 @@ async function openSettingsModal() {
   document.addEventListener("keydown", onKeyDown);
 }
 
+function closeFamilyModal() {
+  if (!familyModalState) return;
+  document.removeEventListener("keydown", familyModalState.onKeyDown);
+  familyModalState.overlay.remove();
+  familyModalState = null;
+}
+
+function renderFamilyMemberRows(members, role) {
+  const rows = members
+    .filter((member) => member.role === role)
+    .sort((a, b) => {
+      const at = toDateMaybe(a.joinedAt)?.getTime() ?? 0;
+      const bt = toDateMaybe(b.joinedAt)?.getTime() ?? 0;
+      return at - bt;
+    })
+    .map((member) => {
+      const uid = member.userId;
+      const isMe = uid === auth.currentUser?.uid;
+      return `
+        <div class="family-member-row">
+          <div class="family-member-avatar">${avatarHtml(member, "member", uid)}</div>
+          <div class="family-member-name">${escapeHtml(getEffectiveDisplayName(member, uid))}</div>
+          ${isMe ? '<span class="family-me-badge">自分</span>' : ""}
+        </div>
+      `;
+    })
+    .join("");
+  return rows || '<div class="muted">メンバーがいません</div>';
+}
+
+async function createFamilyContent() {
+  await ensureMyRole();
+  const uid = auth.currentUser?.uid ?? "";
+  const familyId = state.familyId ?? state.me?.familyId ?? null;
+  const wrapper = el(`<div class="family-root"><div class="muted">読み込み中...</div></div>`);
+
+  if (!familyId) {
+    wrapper.innerHTML = `<div class="card"><h3>家族</h3><div class="muted">家族未作成です</div></div>`;
+    return wrapper;
+  }
+
+  const [family, members, inviteCodes] = await Promise.all([
+    getFamily(familyId),
+    listFamilyMembers(familyId),
+    state.role === "parent" ? listInviteCodes(familyId) : Promise.resolve({ parent: null, child: null }),
+  ]);
+  const meMember = members.find((member) => member.userId === uid) ?? null;
+  const isParent = meMember?.role === "parent";
+  const familyName = (typeof family?.name === "string" && family.name.trim()) ? family.name.trim() : "わが家";
+  const activeParentCount = members.filter((member) => member.role === "parent").length;
+  const isLastParent = isParent && activeParentCount <= 1;
+
+  wrapper.innerHTML = `
+    <div class="card">
+      <h3 class="family-modal-title">家族</h3>
+      <section class="family-section">
+        <div class="family-section-title">家族名</div>
+        ${
+          isParent
+            ? `
+              <div class="family-name-row">
+                <input id="family-name-input" maxlength="20" value="${escapeHtml(familyName)}" />
+                <button type="button" id="family-name-save">変更</button>
+              </div>
+            `
+            : `<div class="family-name-text">${escapeHtml(familyName)}</div>`
+        }
+      </section>
+      <section class="family-section">
+        <div class="family-section-title">親</div>
+        <div class="family-members">${renderFamilyMemberRows(members, "parent")}</div>
+      </section>
+      <section class="family-section">
+        <div class="family-section-title">子</div>
+        <div class="family-members">${renderFamilyMemberRows(members, "child")}</div>
+      </section>
+      ${
+        isParent
+          ? `
+            <section class="family-section">
+              <div class="family-section-title">家族招待コード</div>
+              <div class="family-code-row">
+                <span class="family-code-label">親用</span>
+                <code class="family-code-value" id="family-code-parent">${escapeHtml(inviteCodes.parent ?? "—")}</code>
+                <button type="button" class="secondary family-code-copy" id="copy-family-parent" ${inviteCodes.parent ? "" : "disabled"}>コピー</button>
+              </div>
+              <div class="family-code-row">
+                <span class="family-code-label">子用</span>
+                <code class="family-code-value" id="family-code-child">${escapeHtml(inviteCodes.child ?? "—")}</code>
+                <button type="button" class="secondary family-code-copy" id="copy-family-child" ${inviteCodes.child ? "" : "disabled"}>コピー</button>
+              </div>
+            </section>
+          `
+          : ""
+      }
+      <section class="family-section family-danger-zone">
+        <button type="button" id="leave-family-btn" class="family-leave-btn ${isLastParent ? "leave-disabled" : ""}">家族をぬける</button>
+      </section>
+    </div>
+  `;
+
+  if (isParent) {
+    const saveBtn = wrapper.querySelector("#family-name-save");
+    const input = wrapper.querySelector("#family-name-input");
+    if (saveBtn && input) {
+      saveBtn.addEventListener("click", async () => {
+        if (saveBtn.disabled) return;
+        const name = input.value.trim();
+        if (name.length < 1 || name.length > 20) {
+          await showToast("家族名は1〜20文字で入力してください");
+          return;
+        }
+        saveBtn.disabled = true;
+        const original = saveBtn.textContent;
+        saveBtn.textContent = "変更中...";
+        try {
+          await updateFamilyName(name);
+          await showToast("家族名を変更しました");
+        } catch (error) {
+          console.error("updateFamilyName failed", error);
+          await showToast(toUserErrorMessage(error));
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.textContent = original;
+        }
+      });
+    }
+
+    const parentCopyBtn = wrapper.querySelector("#copy-family-parent");
+    const childCopyBtn = wrapper.querySelector("#copy-family-child");
+    const parentCodeEl = wrapper.querySelector("#family-code-parent");
+    const childCodeEl = wrapper.querySelector("#family-code-child");
+    if (parentCopyBtn && parentCodeEl) {
+      bindCopyValueButton(parentCopyBtn, () => parentCodeEl.textContent?.trim() ?? "");
+    }
+    if (childCopyBtn && childCodeEl) {
+      bindCopyValueButton(childCopyBtn, () => childCodeEl.textContent?.trim() ?? "");
+    }
+  }
+
+  const leaveBtn = wrapper.querySelector("#leave-family-btn");
+  if (leaveBtn) {
+    leaveBtn.addEventListener("click", async () => {
+      if (leaveBtn.disabled) return;
+      if (isLastParent) {
+        await showToast("最後の親は家族をぬけられません");
+        return;
+      }
+      const ok = await showConfirmModal({
+        title: "家族をぬけますか？",
+        message: "家族をぬけると、\n家族の予定や記録は表示されなくなります。\n※自分の記録は消えません。",
+        okText: "家族をぬける",
+        cancelText: "やめる",
+      });
+      if (!ok) return;
+
+      leaveBtn.disabled = true;
+      const original = leaveBtn.textContent;
+      leaveBtn.textContent = "処理中...";
+      try {
+        await leaveFamily();
+        const me = await getMyUser(uid);
+        state.me = { uid, ...(me ?? {}) };
+        state.familyId = me?.familyId ?? null;
+        state.role = null;
+        closeFamilyModal();
+        await showToast("家族をぬけました");
+        await render();
+      } catch (error) {
+        console.error("leaveFamily failed", error);
+        await showToast(toUserErrorMessage(error));
+        leaveBtn.disabled = false;
+        leaveBtn.textContent = original;
+      }
+    });
+  }
+
+  return wrapper;
+}
+
+async function openFamilyModal() {
+  if (familyModalState) return;
+  if (settingsModalState) closeSettingsModal();
+  const overlay = el(`
+    <div class="settings-modal-overlay">
+      <div class="settings-modal-card family-modal-card">
+        <button class="settings-modal-close" aria-label="close">&times;</button>
+        <div class="settings-modal-body"><div class="muted">読み込み中...</div></div>
+      </div>
+    </div>
+  `);
+  const onKeyDown = (e) => {
+    if (e.key === "Escape") closeFamilyModal();
+  };
+  overlay.querySelector(".settings-modal-close").onclick = closeFamilyModal;
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeFamilyModal();
+  });
+  familyModalState = { overlay, onKeyDown };
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKeyDown);
+
+  try {
+    const body = overlay.querySelector(".settings-modal-body");
+    body.innerHTML = "";
+    body.appendChild(await createFamilyContent());
+  } catch (error) {
+    console.error("openFamilyModal failed", error);
+    const body = overlay.querySelector(".settings-modal-body");
+    body.innerHTML = `<div class="card"><h3>家族</h3><div class="muted">${escapeHtml(toUserErrorMessage(error))}</div></div>`;
+  }
+}
+
 function renderSettingsPage(panel) {
   panel.innerHTML = "";
-  ensureMyRole().then(() => {
+  ensureMyRole().then(async () => {
+    const familyName = await resolveCurrentFamilyName();
     panel.innerHTML = "";
-    panel.appendChild(createSettingsContent({ modal: false, showBack: true }));
+    panel.appendChild(createSettingsContent({ modal: false, showBack: true, familyName }));
   });
 }
 
@@ -1367,12 +1676,12 @@ async function renderHome() {
     <div>
       ${(!view || view === "settings") ? `
       <div class="card profile-header">
-        <div class="header-avatar">${avatarHtml(state.me, "me")}</div>
-        <div class="profile-meta">
-          <div class="profile-name header-name">${escapeHtml(getEffectiveDisplayName(state.me, state.me.uid))}</div>
-          <div class="muted">family: ${escapeHtml(state.familyId ?? "-")}</div>
-        </div>
-      </div>` : ""}
+          <div class="header-avatar">${avatarHtml(state.me, "me")}</div>
+          <div class="profile-meta">
+            <div class="profile-name header-name">${escapeHtml(getEffectiveDisplayName(state.me, state.me.uid, { allowLiffFallback: true }))}</div>
+            <div class="muted">family: ${escapeHtml(state.familyId ?? "-")}</div>
+          </div>
+        </div>` : ""}
       ${!view ? `
       <div class="card">
         <button id="nav-declare">${UI.declareTitle}</button>
@@ -2155,6 +2464,7 @@ function bootstrapOnce() {
 }
 
 if (shouldBoot) {
+  ensureAvatarErrorHandler();
   loadBuildId();
   registerGlobalErrorHandlers();
   showLoadingBanner();

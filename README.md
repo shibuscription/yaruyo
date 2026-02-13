@@ -162,8 +162,16 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
 
 -   表示名編集
 -   通知設定（やるよ / やったよ / 開始時刻リマインド）
--   家族招待コード（親用 / 子用、コピー可）
 -   UIDは短縮表示 + コピー対応（`?debug=1` でフルUID表示）
+-   「家族を見る」から家族モーダルを開く（設定モーダルは閉じる）
+
+### 🟢 家族モーダル
+
+-   家族名表示（親のみ編集可）
+-   メンバー一覧（親/子グループ、アイコン、自分バッジ）
+-   招待コード（親のみ表示、親用/子用コピー可）
+-   「家族をぬける」導線（confirmあり）
+-   最後の親は leaveFamily で拒否
 
 ### 🟢 教科のカスタマイズ（view=subjects）
 
@@ -216,6 +224,8 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
 -   inviteCodes は parent のみ read
 -   plan削除は物理deleteせず cancelled 更新
 -   users 更新可能フィールドに `subjectPackId`, `enabledSubjects(<=10)` を追加
+-   家族離脱は Callable `leaveFamily` で実施（最後の親はサーバ側で拒否）
+-   家族名変更は Callable `updateFamilyName`（parentのみ、1〜20文字）
 
 ------------------------------------------------------------------------
 

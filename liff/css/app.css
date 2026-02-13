@@ -255,6 +255,12 @@ input, select, textarea {
   justify-content: center;
 }
 
+.family-member-avatar .avatar {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+}
+
 .avatar img {
   width: 100%;
   height: 100%;
@@ -262,8 +268,23 @@ input, select, textarea {
   display: block;
 }
 
-.avatar-fallback {
-  background: #d0d4d8;
+.avatar-fallback-text {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 700;
+  background: var(--avatar-bg, #7a8a84);
+}
+
+.avatar.has-image .avatar-fallback-text {
+  display: none;
+}
+
+.avatar.has-image.avatar-img-error .avatar-fallback-text {
+  display: inline-flex;
 }
 
 .record-grid {
@@ -358,6 +379,10 @@ input, select, textarea {
   justify-content: center;
   z-index: 1000;
   padding: 16px;
+}
+
+.confirm-overlay {
+  z-index: 2100;
 }
 
 .modal-card {
@@ -455,12 +480,9 @@ input, select, textarea {
   min-width: 0;
 }
 
-.uid-text {
+.uid-short {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .uid-copy-btn {
@@ -481,6 +503,18 @@ input, select, textarea {
 .settings-title {
   margin: 0 0 8px;
   font-size: 15px;
+}
+
+.settings-family-link-text {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #285e4a;
+  text-decoration: underline;
+}
+
+.settings-family-link-text:hover {
+  color: #1e7f5c;
 }
 
 .setting-toggle-row {
@@ -543,6 +577,111 @@ input, select, textarea {
   border: 1px solid #e7dfd0;
   position: relative;
   padding: 14px;
+}
+
+.family-modal-card {
+  width: min(620px, 100%);
+}
+
+.family-modal-title {
+  margin: 0 0 10px;
+}
+
+.family-section {
+  margin-bottom: 12px;
+}
+
+.family-section-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.family-name-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.family-name-row input {
+  margin: 0;
+}
+
+.family-name-row button {
+  margin: 0;
+}
+
+.family-name-text {
+  font-weight: 600;
+}
+
+.family-members {
+  display: grid;
+  gap: 6px;
+}
+
+.family-member-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.family-member-name {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.family-me-badge {
+  font-size: 11px;
+  color: #1f503f;
+  background: #eef6f2;
+  border: 1px solid #c9d8d2;
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.family-code-row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.family-code-value {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  background: #f7f8fa;
+  border: 1px solid #d8dde3;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.family-code-copy {
+  margin: 0;
+}
+
+.family-danger-zone {
+  margin-top: 14px;
+  border-top: 1px dashed #efc8c8;
+  padding-top: 10px;
+}
+
+.family-leave-btn {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: #c22;
+  text-decoration: underline;
+}
+
+.family-leave-btn.leave-disabled {
+  color: #999;
+  text-decoration: none;
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .settings-modal-close {
