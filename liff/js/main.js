@@ -1083,23 +1083,33 @@ function createSettingsContent({ modal = false, showBack = false } = {}) {
   }
 
   wrapper.querySelector("#save-settings").onclick = async () => {
-    await updateMySettings(auth.currentUser.uid, {
-      appDisplayName: wrapper.querySelector("#displayName").value || null,
-      notifyActivityPlan: wrapper.querySelector("#notifyPlan").checked,
-      notifyActivityRecord: wrapper.querySelector("#notifyRecord").checked,
-      notificationSettings: {
-        startReminderEnabled: wrapper.querySelector("#notifyStartReminder").checked,
-      },
-      updatedAt: new Date(),
-    });
-    const me = await getMyUser(auth.currentUser.uid);
-    state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
-    refreshHeaderView();
-    const nextName = state.me?.displayName ?? state.me?.appDisplayName ?? liffProfile?.displayName ?? "";
-    wrapper.querySelector("#displayName").value = nextName;
-    const titleName = wrapper.querySelector(".settings-user-card .profile-name");
-    if (titleName) titleName.textContent = nextName || "ユーザー";
-    await showToast("保存しました。");
+    const saveBtn = wrapper.querySelector("#save-settings");
+    if (saveBtn.disabled) return;
+    saveBtn.disabled = true;
+    const original = saveBtn.textContent;
+    saveBtn.textContent = "保存中...";
+    try {
+      await updateMySettings(auth.currentUser.uid, {
+        appDisplayName: wrapper.querySelector("#displayName").value || null,
+        notifyActivityPlan: wrapper.querySelector("#notifyPlan").checked,
+        notifyActivityRecord: wrapper.querySelector("#notifyRecord").checked,
+        notificationSettings: {
+          startReminderEnabled: wrapper.querySelector("#notifyStartReminder").checked,
+        },
+        updatedAt: new Date(),
+      });
+      const me = await getMyUser(auth.currentUser.uid);
+      state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
+      refreshHeaderView();
+      const nextName = state.me?.displayName ?? state.me?.appDisplayName ?? liffProfile?.displayName ?? "";
+      wrapper.querySelector("#displayName").value = nextName;
+      const titleName = wrapper.querySelector(".settings-user-card .profile-name");
+      if (titleName) titleName.textContent = nextName || "ユーザー";
+      await showToast("保存しました。");
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = original;
+    }
   };
 
   if (state.role === "parent") {
@@ -1273,16 +1283,21 @@ function renderOnboarding() {
   const status = root.querySelector("#join-status");
 
   createBtn.addEventListener("click", async () => {
+    if (createBtn.disabled) return;
+    createBtn.disabled = true;
+    const original = createBtn.textContent;
+    createBtn.textContent = "作成中...";
     const ok = await showConfirmModal({
       title: "家族を作成しますか？",
       message: "この端末のユーザーが「親」として家族を作成します。\nあとから家族に参加する人へ招待コードを共有できます。",
       okText: "作成する",
       cancelText: "やめる",
     });
-    if (!ok) return;
-    createBtn.disabled = true;
-    const original = createBtn.textContent;
-    createBtn.textContent = "作成中...";
+    if (!ok) {
+      createBtn.disabled = false;
+      createBtn.textContent = original;
+      return;
+    }
     try {
       await createFamily();
       const me = await getMyUser(auth.currentUser.uid);
@@ -1291,7 +1306,6 @@ function renderOnboarding() {
     } catch (error) {
       console.error("createFamily failed", error);
       await showToast(toUserErrorMessage(error));
-    } finally {
       createBtn.disabled = false;
       createBtn.textContent = original;
     }
@@ -1299,10 +1313,16 @@ function renderOnboarding() {
 
   joinBtn.addEventListener("click", async (e) => {
     e.preventDefault();
+    if (joinBtn.disabled) return;
+    joinBtn.disabled = true;
+    const original = joinBtn.textContent;
+    joinBtn.textContent = "参加中...";
     const code = (codeInput.value || "").trim();
     if (!code) {
       status.textContent = "コードを入力してね";
       await showToast("コードを入力してね");
+      joinBtn.disabled = false;
+      joinBtn.textContent = original;
       return;
     }
     const ok = await showConfirmModal({
@@ -1311,10 +1331,11 @@ function renderOnboarding() {
       okText: "参加する",
       cancelText: "やめる",
     });
-    if (!ok) return;
-    joinBtn.disabled = true;
-    const original = joinBtn.textContent;
-    joinBtn.textContent = "参加中...";
+    if (!ok) {
+      joinBtn.disabled = false;
+      joinBtn.textContent = original;
+      return;
+    }
     status.textContent = "参加中...";
     try {
       const result = await joinFamilyByCode(code);
@@ -1335,7 +1356,6 @@ function renderOnboarding() {
       const message = toUserErrorMessage(error);
       status.textContent = message;
       await showToast(message);
-    } finally {
       joinBtn.disabled = false;
       joinBtn.textContent = original;
     }
@@ -1465,9 +1485,16 @@ async function renderDeclare(panel) {
   setAmountType("time");
 
   panel.querySelector("#submit-declare").onclick = async () => {
+    const submitBtn = panel.querySelector("#submit-declare");
+    if (submitBtn.disabled) return;
+    submitBtn.disabled = true;
+    const original = submitBtn.textContent;
+    submitBtn.textContent = "送信中...";
     const subjects = Array.from(selected);
     if (subjects.length === 0) {
       await showToast("教科を1つ以上選択してください。");
+      submitBtn.disabled = false;
+      submitBtn.textContent = original;
       return;
     }
     const startAt = panel.querySelector("#startAt").value || null;
@@ -1478,19 +1505,30 @@ async function renderDeclare(panel) {
         okText: "このままやるよ",
         cancelText: "選びなおす",
       });
-      if (!ok) return;
+      if (!ok) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = original;
+        return;
+      }
     }
     const amountType = panel.querySelector("#amountType").value || null;
     const amountValueRaw = panel.querySelector("#amountValue").value;
-    await declarePlan({
-      subjects,
-      startAt,
-      amountType,
-      amountValue: amountValueRaw ? Number(amountValueRaw) : null,
-      contentMemo: panel.querySelector("#contentMemo").value || null,
-    });
-    await showToast("やるよを送ったよ");
-    navigateToView("plans");
+    try {
+      await declarePlan({
+        subjects,
+        startAt,
+        amountType,
+        amountValue: amountValueRaw ? Number(amountValueRaw) : null,
+        contentMemo: panel.querySelector("#contentMemo").value || null,
+      });
+      await showToast("やるよを送ったよ");
+      navigateToView("plans");
+    } catch (error) {
+      console.error("declarePlan failed", error);
+      await showToast(toUserErrorMessage(error));
+      submitBtn.disabled = false;
+      submitBtn.textContent = original;
+    }
   };
 }
 
@@ -1568,19 +1606,31 @@ async function renderSubjects(panel) {
     });
 
     panel.querySelector("#save-subject-settings").addEventListener("click", async () => {
+      const saveBtn = panel.querySelector("#save-subject-settings");
+      if (saveBtn.disabled) return;
+      saveBtn.disabled = true;
+      const original = saveBtn.textContent;
+      saveBtn.textContent = "保存中...";
       const normalized = resolveEnabledSubjects({
         packId: pack.id,
         enabledSubjects,
       });
-      await updateMySettings(auth.currentUser.uid, {
-        subjectPackId: pack.id,
-        enabledSubjects: normalized,
-        updatedAt: new Date(),
-      });
-      const me = await getMyUser(auth.currentUser.uid);
-      state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
-      await showToast("保存しました。");
-      navigateToView("declare");
+      try {
+        await updateMySettings(auth.currentUser.uid, {
+          subjectPackId: pack.id,
+          enabledSubjects: normalized,
+          updatedAt: new Date(),
+        });
+        const me = await getMyUser(auth.currentUser.uid);
+        state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
+        await showToast("保存しました。");
+        navigateToView("declare");
+      } catch (error) {
+        console.error("save subject settings failed", error);
+        await showToast(toUserErrorMessage(error));
+        saveBtn.disabled = false;
+        saveBtn.textContent = original;
+      }
     });
   };
 
@@ -1684,14 +1734,18 @@ async function renderPlans(panel) {
         return;
       }
       if (action === "delete") {
+        if (actionBtn.disabled) return;
+        actionBtn.disabled = true;
         const ok = await showConfirmModal({
           title: "削除していい？",
           message: "この「やるよ」を消します。",
           okText: "削除する",
           cancelText: "やめる",
         });
-        if (!ok) return;
-        actionBtn.disabled = true;
+        if (!ok) {
+          actionBtn.disabled = false;
+          return;
+        }
         const item = actionBtn.closest(".plan-item");
         if (!item) {
           try {
@@ -1795,10 +1849,22 @@ function renderRecordForm(panel, plan) {
   `;
   bindPanelGear(panel);
   panel.querySelector("#submit-record").onclick = async () => {
+    const submitBtn = panel.querySelector("#submit-record");
+    if (submitBtn.disabled) return;
+    submitBtn.disabled = true;
+    const original = submitBtn.textContent;
+    submitBtn.textContent = "送信中...";
     const memo = panel.querySelector("#recordMemo").value || null;
-    await recordPlan(plan.id, panel.querySelector("#result").value, memo);
-    await showToast("やったよを記録しました");
-    await renderStats(panel);
+    try {
+      await recordPlan(plan.id, panel.querySelector("#result").value, memo);
+      await showToast("やったよを記録しました");
+      await renderStats(panel);
+    } catch (error) {
+      console.error("recordPlan failed", error);
+      await showToast(toUserErrorMessage(error));
+      submitBtn.disabled = false;
+      submitBtn.textContent = original;
+    }
   };
 }
 
