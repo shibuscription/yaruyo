@@ -16,8 +16,27 @@ const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LIFF_ID = process.env.LIFF_ID;
 const RICHMENU_IMAGE_PATH = process.env.RICHMENU_IMAGE_PATH;
 const YARUYO_BUILD_ID = process.env.YARUYO_BUILD_ID;
-const CLI_BUILD_ID = (process.argv[2] || "").trim();
 const BUILD_ID_FILE_PATH = path.resolve(__dirname, "../liff/js/buildId.js");
+
+function parseCliArgs(argv) {
+  const args = argv.slice(2);
+  let buildId = "";
+  let debug = false;
+  for (const arg of args) {
+    if (arg === "--debug") {
+      debug = true;
+      continue;
+    }
+    if (!arg.startsWith("--") && !buildId) {
+      buildId = arg.trim();
+    }
+  }
+  return { buildId, debug };
+}
+
+const cli = parseCliArgs(process.argv);
+const CLI_BUILD_ID = cli.buildId;
+const DEBUG_MODE = cli.debug;
 
 function requireEnv(name, value) {
   if (!value) {
@@ -58,10 +77,13 @@ function readBuildIdFromFile() {
   }
 }
 
-function buildLiffUrl(view, buildId) {
+function buildLiffUrl(view, buildId, debugMode) {
   const url = new URL(`https://liff.line.me/${LIFF_ID}`);
   url.searchParams.set("view", view);
   url.searchParams.set("v", buildId);
+  if (debugMode) {
+    url.searchParams.set("debug", "1");
+  }
   return url.toString();
 }
 
@@ -96,24 +118,25 @@ async function main() {
   const fileBuildId = readBuildIdFromFile();
   const buildId = CLI_BUILD_ID || YARUYO_BUILD_ID || fileBuildId || buildIdNow();
   console.log(`Using build id: ${buildId}`);
+  console.log("mode:", DEBUG_MODE ? "debug" : "normal");
 
   const richMenuRequest = {
     size: { width: 2500, height: 843 },
     selected: true,
-    name: "YARUYO default",
+    name: DEBUG_MODE ? "YARUYO default (debug)" : "YARUYO default",
     chatBarText: "メニュー",
     areas: [
       {
         bounds: { x: 0, y: 0, width: 833, height: 843 },
-        action: { type: "uri", uri: buildLiffUrl("declare", buildId) },
+        action: { type: "uri", uri: buildLiffUrl("declare", buildId, DEBUG_MODE) },
       },
       {
         bounds: { x: 833, y: 0, width: 833, height: 843 },
-        action: { type: "uri", uri: buildLiffUrl("record", buildId) },
+        action: { type: "uri", uri: buildLiffUrl("record", buildId, DEBUG_MODE) },
       },
       {
         bounds: { x: 1666, y: 0, width: 834, height: 843 },
-        action: { type: "uri", uri: buildLiffUrl("stats", buildId) },
+        action: { type: "uri", uri: buildLiffUrl("stats", buildId, DEBUG_MODE) },
       },
     ],
   };

@@ -273,6 +273,12 @@ npm scripts（推奨）:
 
 - `node scripts/createRichMenu.js`（`liff/js/buildId.js` → env → 自動生成の順で buildId 解決）
 - `node scripts/createRichMenu.js 20260214-1`（CLI引数で build id 指定）
+- `node scripts/createRichMenu.js --debug`（debug=1付きのデバッグ用リッチメニューへ一時切替）
+- `node scripts/createRichMenu.js 20260214-1 --debug`（build id 指定 + debug=1）
+
+debug調査後に通常へ戻す:
+
+- `node scripts/createRichMenu.js`（--debug なしで再実行）
 
 buildIdファイル更新のみ:
 
