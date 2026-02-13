@@ -42,7 +42,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-const functions = getFunctions(app, "asia-northeast1");
+const FUNCTIONS_REGION = "asia-northeast1";
+const functions = getFunctions(app, FUNCTIONS_REGION);
+const PROJECT_ID = firebaseConfig.projectId;
 
 // Local dev: use emulators only when `?mode=local` is present.
 // Example: http://localhost:3000/liff/index.html?mode=local
@@ -84,6 +86,42 @@ export async function signInWithLineIdToken(idToken, channelId) {
   }
   await signInWithCustomToken(auth, customToken);
   return res.data;
+}
+
+function exchangeLineIdTokenHttpUrl() {
+  if (isLocal) {
+    return `http://127.0.0.1:5001/${PROJECT_ID}/${FUNCTIONS_REGION}/exchangeLineIdTokenHttp`;
+  }
+  return `https://${FUNCTIONS_REGION}-${PROJECT_ID}.cloudfunctions.net/exchangeLineIdTokenHttp`;
+}
+
+export async function signInWithLineIdTokenHttp(idToken, channelId, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(exchangeLineIdTokenHttpUrl(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ idToken, channelId }),
+      signal: controller.signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body?.customToken) {
+      const reason = body?.message || body?.error || `HTTP ${res.status}`;
+      throw new Error(`exchangeLineIdTokenHttp failed: ${reason}`);
+    }
+    await signInWithCustomToken(auth, body.customToken);
+    return body;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("timeout: exchangeLineIdTokenHttp");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export async function getMyUser(uid) {

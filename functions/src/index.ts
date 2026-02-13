@@ -7,6 +7,7 @@ import { leaveFamily } from "./callables/leaveFamily.js";
 import { closeFamily } from "./callables/closeFamily.js";
 import { updateFamilyName } from "./callables/updateFamilyName.js";
 import { exchangeLineIdToken } from "./callables/exchangeLineIdToken.js";
+import { exchangeLineIdTokenHttp } from "./http/exchangeLineIdTokenHttp.js";
 import { reminderScheduler } from "./jobs/reminderScheduler.js";
 
 ensureAdminApp();
@@ -20,5 +21,6 @@ export {
   closeFamily,
   updateFamilyName,
   exchangeLineIdToken,
+  exchangeLineIdTokenHttp,
   reminderScheduler,
 };

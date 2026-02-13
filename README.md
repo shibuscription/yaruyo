@@ -240,6 +240,8 @@ firebase use prod
 
 firebase deploy --only hosting\
 firebase deploy --only functions\
+firebase deploy --only functions:exchangeLineIdToken\
+firebase deploy --only functions:exchangeLineIdTokenHttp\
 firebase deploy --only firestore:rules\
 firebase deploy --only firestore:indexes
 
