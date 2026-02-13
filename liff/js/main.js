@@ -50,11 +50,30 @@ const rawView = params.get("view");
 const mappedView = rawView === "yaruyo" ? "declare" : rawView;
 const view = ["declare", "record", "stats", "settings", "plans", "subjects"].includes(mappedView) ? mappedView : null;
 const SETTINGS_DEBUG = params.get("debug") === "1";
+const DEBUG_QUERY_ENABLED = params.get("debug") === "1";
+const DEBUG_UIDS = [
+  // Add allowed production debug UIDs here.
+];
 const LIFF_ID = "2009111070-71hr5ID2";
 const ENABLE_DEBUG = false;
 const ENABLE_DEBUG_LOG_UPLOAD = false;
 let buildIdText = "unknown";
 let buildIdBadgeEl = null;
+let debugHudEl = null;
+let debugHudWatchdog = null;
+let debugHudNetworkBound = false;
+
+const prodDebug = {
+  requested: DEBUG_QUERY_ENABLED,
+  enabled: false,
+  uid: null,
+  familyId: null,
+  tasks: new Map(),
+  logs: [],
+  lastSuccessApi: null,
+  lastError: null,
+  warning: null,
+};
 
 function getHashParam(key) {
   const raw = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
@@ -138,6 +157,9 @@ function phaseLog(phase, detail = undefined) {
   currentBootPhase = phase;
   if (detail !== undefined) console.info(`[BOOT] ${phase}`, detail);
   else console.info(`[BOOT] ${phase}`);
+  if (prodDebug.enabled) {
+    debugLog("phase", phase, detail ?? null);
+  }
 }
 
 function ensureBuildIdBadge() {
@@ -160,6 +182,7 @@ async function loadBuildId() {
     buildIdText = "unknown";
   }
   ensureBuildIdBadge();
+  if (prodDebug.enabled) renderDebugHud();
 }
 
 async function uploadDebugLogIfEnabled(type, payload = {}) {
@@ -265,6 +288,186 @@ function el(html) {
   const t = document.createElement("template");
   t.innerHTML = html.trim();
   return t.content.firstElementChild;
+}
+
+function debugAllowed(uid) {
+  if (!prodDebug.requested) return false;
+  return DEBUG_UIDS.includes(uid);
+}
+
+function debugNowTime() {
+  return new Date().toLocaleTimeString("ja-JP", { hour12: false });
+}
+
+function debugLog(category, message, meta = null) {
+  if (!prodDebug.enabled) return;
+  prodDebug.logs.unshift({
+    at: debugNowTime(),
+    category,
+    message,
+    meta,
+  });
+  prodDebug.logs = prodDebug.logs.slice(0, 10);
+  renderDebugHud();
+}
+
+function activateProdDebug(uid) {
+  if (!debugAllowed(uid)) return;
+  if (prodDebug.enabled) return;
+  prodDebug.enabled = true;
+  prodDebug.uid = uid;
+  ensureDebugHud();
+  debugLog("debug", "prod debug enabled", { uid });
+}
+
+function ensureDebugHud() {
+  if (!prodDebug.enabled) return;
+  if (!debugHudEl) {
+    debugHudEl = el(`
+      <aside class="debug-hud">
+        <div class="debug-hud-head">
+          <strong>Debug HUD</strong>
+          <span id="debug-hud-status">OK</span>
+        </div>
+        <div class="debug-hud-meta" id="debug-hud-meta"></div>
+        <div class="debug-hud-section">
+          <div class="debug-hud-title">Tasks</div>
+          <div id="debug-hud-tasks" class="debug-hud-list muted">none</div>
+        </div>
+        <div class="debug-hud-section">
+          <div class="debug-hud-title">Logs</div>
+          <div id="debug-hud-logs" class="debug-hud-list"></div>
+        </div>
+        <div class="debug-hud-actions">
+          <button type="button" id="debug-hud-copy" class="secondary">Copy</button>
+          <button type="button" id="debug-hud-clear" class="secondary">Clear</button>
+        </div>
+      </aside>
+    `);
+    document.body.appendChild(debugHudEl);
+    debugHudEl.querySelector("#debug-hud-copy").addEventListener("click", async () => {
+      const payload = JSON.stringify(
+        {
+          view,
+          buildId: buildIdText,
+          uid: prodDebug.uid,
+          familyId: prodDebug.familyId,
+          online: navigator.onLine,
+          tasks: Array.from(prodDebug.tasks.values()),
+          lastSuccessApi: prodDebug.lastSuccessApi,
+          lastError: prodDebug.lastError,
+          logs: prodDebug.logs,
+        },
+        null,
+        2,
+      );
+      try {
+        await copyTextToClipboard(payload);
+        await showToast("debugログをコピーしました");
+      } catch {
+        await showToast("コピーに失敗しました");
+      }
+    });
+    debugHudEl.querySelector("#debug-hud-clear").addEventListener("click", () => {
+      prodDebug.logs = [];
+      prodDebug.lastError = null;
+      prodDebug.warning = null;
+      renderDebugHud();
+    });
+  }
+  if (!debugHudWatchdog) {
+    debugHudWatchdog = setInterval(() => {
+      if (!prodDebug.enabled) return;
+      const stuck = Array.from(prodDebug.tasks.values()).find((task) => Date.now() - task.startedAtMs >= 15000);
+      if (stuck) {
+        prodDebug.warning = `task timeout: ${stuck.name} (${Math.round((Date.now() - stuck.startedAtMs) / 1000)}s)`;
+      } else {
+        prodDebug.warning = null;
+      }
+      renderDebugHud();
+    }, 1000);
+  }
+  if (!debugHudNetworkBound) {
+    debugHudNetworkBound = true;
+    window.addEventListener("online", () => {
+      debugLog("net", "online");
+    });
+    window.addEventListener("offline", () => {
+      debugLog("net", "offline");
+    });
+  }
+  renderDebugHud();
+}
+
+function renderDebugHud() {
+  if (!prodDebug.enabled || !debugHudEl) return;
+  const metaEl = debugHudEl.querySelector("#debug-hud-meta");
+  const tasksEl = debugHudEl.querySelector("#debug-hud-tasks");
+  const logsEl = debugHudEl.querySelector("#debug-hud-logs");
+  const statusEl = debugHudEl.querySelector("#debug-hud-status");
+  const currentView = new URLSearchParams(location.search).get("view") ?? "declare(tab)";
+  metaEl.innerHTML = `
+    view: ${escapeHtml(String(currentView))}<br>
+    build: ${escapeHtml(buildIdText || "unknown")}<br>
+    uid: ${escapeHtml(prodDebug.uid ?? "-")}<br>
+    familyId: ${escapeHtml(prodDebug.familyId ?? "-")}<br>
+    online: ${navigator.onLine ? "online" : "offline"}<br>
+    lastSuccessApi: ${escapeHtml(prodDebug.lastSuccessApi ?? "-")}<br>
+    lastError: ${escapeHtml(prodDebug.lastError?.message ?? "-")}
+  `;
+  const taskRows = Array.from(prodDebug.tasks.values()).map((task) => {
+    const sec = ((Date.now() - task.startedAtMs) / 1000).toFixed(1);
+    return `${task.name} (${sec}s)`;
+  });
+  tasksEl.innerHTML = taskRows.length ? taskRows.map((t) => `<div>${escapeHtml(t)}</div>`).join("") : "<div>none</div>";
+  logsEl.innerHTML = prodDebug.logs
+    .map((log) => `<div>[${escapeHtml(log.at)}] ${escapeHtml(log.category)}: ${escapeHtml(log.message)}</div>`)
+    .join("");
+  if (!prodDebug.logs.length) logsEl.innerHTML = "<div class='muted'>no logs</div>";
+  if (prodDebug.warning) {
+    debugHudEl.classList.add("warn");
+    statusEl.textContent = "WARN";
+    statusEl.title = prodDebug.warning;
+  } else {
+    debugHudEl.classList.remove("warn");
+    statusEl.textContent = "OK";
+    statusEl.title = "";
+  }
+}
+
+function beginDebugTask(name, detail = null) {
+  if (!prodDebug.enabled) return null;
+  const id = `${name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  prodDebug.tasks.set(id, { id, name, detail, startedAtMs: Date.now() });
+  debugLog("task", `start:${name}`);
+  return id;
+}
+
+function endDebugTask(id, { ok = true, detail = null, error = null } = {}) {
+  if (!prodDebug.enabled || !id) return;
+  const task = prodDebug.tasks.get(id);
+  if (task) prodDebug.tasks.delete(id);
+  if (ok) {
+    if (task?.name) prodDebug.lastSuccessApi = task.name;
+    debugLog("task", `done:${task?.name ?? id}`, detail);
+  } else {
+    const msg = error?.message ?? String(error ?? "unknown");
+    prodDebug.lastError = { at: Date.now(), message: msg };
+    debugLog("task", `error:${task?.name ?? id}`, { message: msg });
+  }
+}
+
+async function traceAsync(name, fn) {
+  const started = performance.now();
+  const taskId = beginDebugTask(name);
+  try {
+    const result = await fn();
+    endDebugTask(taskId, { ok: true, detail: { ms: Math.round(performance.now() - started) } });
+    return result;
+  } catch (error) {
+    endDebugTask(taskId, { ok: false, error });
+    throw error;
+  }
 }
 
 function safeJson(value) {
@@ -602,6 +805,10 @@ function refreshHeaderView() {
   const name = header.querySelector(".header-name");
   if (avatar) avatar.innerHTML = avatarHtml(state.me, "me");
   if (name) name.textContent = getEffectiveDisplayName(state.me, state.me.uid, { allowLiffFallback: true });
+  if (prodDebug.enabled) {
+    prodDebug.familyId = state.familyId ?? state.me?.familyId ?? null;
+    renderDebugHud();
+  }
 }
 
 function startUserSubscription(uid) {
@@ -612,6 +819,10 @@ function startUserSubscription(uid) {
   unsubscribeUser = subscribeMyUser(uid, (userDoc) => {
     state.me = { uid, ...(userDoc ?? {}) };
     state.familyId = userDoc?.familyId ?? state.familyId ?? null;
+    if (prodDebug.enabled) {
+      prodDebug.familyId = state.familyId ?? null;
+      debugLog("user", "subscribe update", { hasFamily: !!state.familyId });
+    }
     refreshHeaderView();
   });
 }
@@ -839,14 +1050,16 @@ async function loadSettingsDebugInfo(wrapper) {
 }
 
 async function syncLiffProfile(uid) {
-  liffProfile = await getLiffProfileSafe();
+  liffProfile = await traceAsync("liff.getProfileSafe", () => getLiffProfileSafe());
   const decodedIdToken = getDecodedIdTokenSafe();
   if (!liffProfile && !decodedIdToken) return;
   try {
-    await upsertMyLineProfile(uid, {
-      profile: liffProfile,
-      decodedIdToken,
-    });
+    await traceAsync("firestore.upsertMyLineProfile", () =>
+      upsertMyLineProfile(uid, {
+        profile: liffProfile,
+        decodedIdToken,
+      }),
+    );
   } catch (error) {
     console.warn("Profile upsert skipped.", error);
   }
@@ -883,6 +1096,7 @@ function buildStartTimeOptions() {
 }
 
 function navigateToView(nextView) {
+  if (prodDebug.enabled) debugLog("nav", `navigate:${nextView}`);
   const q = new URLSearchParams(location.search);
   q.set("view", nextView);
   q.delete("planId");
@@ -891,6 +1105,7 @@ function navigateToView(nextView) {
 }
 
 function navigateToRecordWithPlan(planId) {
+  if (prodDebug.enabled) debugLog("nav", `navigate:record planId=${planId ? "yes" : "no"}`);
   const q = new URLSearchParams(location.search);
   q.set("view", "record");
   q.set("planId", planId);
@@ -1179,7 +1394,7 @@ function createSettingsContent({ modal = false, showBack = false, familyName = "
     const original = saveBtn.textContent;
     saveBtn.textContent = "保存中...";
     try {
-      await updateMySettings(auth.currentUser.uid, {
+      await traceAsync("firestore.updateMySettings", () => updateMySettings(auth.currentUser.uid, {
         appDisplayName: wrapper.querySelector("#displayName").value || null,
         notifyActivityPlan: wrapper.querySelector("#notifyPlan").checked,
         notifyActivityRecord: wrapper.querySelector("#notifyRecord").checked,
@@ -1187,8 +1402,8 @@ function createSettingsContent({ modal = false, showBack = false, familyName = "
           startReminderEnabled: wrapper.querySelector("#notifyStartReminder").checked,
         },
         updatedAt: new Date(),
-      });
-      const me = await getMyUser(auth.currentUser.uid);
+      }));
+      const me = await traceAsync("firestore.getMyUser", () => getMyUser(auth.currentUser.uid));
       state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
       refreshHeaderView();
       const nextName =
@@ -1317,9 +1532,11 @@ async function createFamilyContent() {
   }
 
   const [family, members, inviteCodes] = await Promise.all([
-    getFamily(familyId),
-    listFamilyMembers(familyId),
-    state.role === "parent" ? listInviteCodes(familyId) : Promise.resolve({ parent: null, child: null }),
+    traceAsync("firestore.getFamily", () => getFamily(familyId)),
+    traceAsync("firestore.listFamilyMembers", () => listFamilyMembers(familyId)),
+    state.role === "parent"
+      ? traceAsync("firestore.listInviteCodes", () => listInviteCodes(familyId))
+      : Promise.resolve({ parent: null, child: null }),
   ]);
   const meMember = members.find((member) => member.userId === uid) ?? null;
   const isParent = meMember?.role === "parent";
@@ -1398,7 +1615,7 @@ async function createFamilyContent() {
         const original = saveBtn.textContent;
         saveBtn.textContent = "変更中...";
         try {
-          await updateFamilyName(name);
+          await traceAsync("callable.updateFamilyName", () => updateFamilyName(name));
           await showToast("家族名を変更しました");
         } catch (error) {
           console.error("updateFamilyName failed", error);
@@ -1442,8 +1659,8 @@ async function createFamilyContent() {
       const original = leaveBtn.textContent;
       leaveBtn.textContent = "処理中...";
       try {
-        await leaveFamily();
-        const me = await getMyUser(uid);
+        await traceAsync("callable.leaveFamily", () => leaveFamily());
+        const me = await traceAsync("firestore.getMyUser", () => getMyUser(uid));
         state.me = { uid, ...(me ?? {}) };
         state.familyId = me?.familyId ?? null;
         state.role = null;
@@ -1475,8 +1692,8 @@ async function createFamilyContent() {
       const original = closeFamilyBtn.textContent;
       closeFamilyBtn.textContent = "処理中...";
       try {
-        await closeFamilyCallable();
-        const me = await getMyUser(uid);
+        await traceAsync("callable.closeFamily", () => closeFamilyCallable());
+        const me = await traceAsync("firestore.getMyUser", () => getMyUser(uid));
         state.me = { uid, ...(me ?? {}) };
         state.familyId = null;
         state.role = null;
@@ -1551,7 +1768,7 @@ async function bootstrap() {
   });
   renderDebugPanel();
   phaseLog("LIFF_INIT");
-  await initLiffOptional();
+  await traceAsync("liff.initOptional", () => initLiffOptional());
   phaseLog("LIFF_INIT_DONE", {
     webMode,
     liffInClient: typeof window.liff?.isInClient === "function" ? window.liff.isInClient() : "n/a",
@@ -1562,7 +1779,7 @@ async function bootstrap() {
   phaseLog("AUTH");
   if (webMode) {
     collectLiffDebug("webmode-anon-auth");
-    await ensureAnonymousAuth();
+    await traceAsync("auth.ensureAnonymousAuth", () => ensureAnonymousAuth());
   } else {
     const liffApi = window.liff;
     if (!liffApi || typeof liffApi.isLoggedIn !== "function") {
@@ -1578,11 +1795,11 @@ async function bootstrap() {
       throw new Error("LIFF ID token is unavailable.");
     }
     collectLiffDebug("liff-exchange-token");
-    await signInWithLineIdToken(idToken, LIFF_ID.split("-")[0]);
+    await traceAsync("callable.signInWithLineIdToken", () => signInWithLineIdToken(idToken, LIFF_ID.split("-")[0]));
   }
 
   phaseLog("AUTH_DONE");
-  const user = await waitAuth();
+  const user = await traceAsync("auth.waitAuth", () => waitAuth());
   collectLiffDebug("after-firebase-auth");
   await updateFirebaseAuthDebug(user);
   if (!user) {
@@ -1592,25 +1809,32 @@ async function bootstrap() {
     return;
   }
   clearDebugError();
+  activateProdDebug(user.uid);
+  prodDebug.familyId = state.familyId ?? null;
   phaseLog("USERDOC");
-  let me = await getMyUser(user.uid);
-  await syncLiffProfile(user.uid);
-  me = await getMyUser(user.uid);
+  let me = await traceAsync("firestore.getMyUser", () => getMyUser(user.uid));
+  await traceAsync("syncLiffProfile", () => syncLiffProfile(user.uid));
+  me = await traceAsync("firestore.getMyUser", () => getMyUser(user.uid));
   state.me = { uid: user.uid, ...(me ?? {}) };
   state.familyId = me?.familyId ?? null;
+  if (prodDebug.enabled) {
+    prodDebug.familyId = state.familyId ?? null;
+  }
   startUserSubscription(user.uid);
   phaseLog("RENDER");
-  await render();
+  await traceAsync("render", () => render());
   phaseLog("RENDER_DONE");
   hideLoadingBanner();
 }
 
 async function render() {
+  if (prodDebug.enabled) debugLog("render", "render start", { hasFamily: !!state.familyId });
   if (!state.familyId) {
     renderOnboarding();
+    if (prodDebug.enabled) debugLog("render", "onboarding");
     return;
   }
-  await renderHome();
+  await traceAsync("renderHome", () => renderHome());
 }
 
 function renderOnboarding() {
@@ -1650,8 +1874,8 @@ function renderOnboarding() {
       return;
     }
     try {
-      await createFamily();
-      const me = await getMyUser(auth.currentUser.uid);
+      await traceAsync("callable.createFamily", () => createFamily());
+      const me = await traceAsync("firestore.getMyUser", () => getMyUser(auth.currentUser.uid));
       state.familyId = me.familyId;
       await render();
     } catch (error) {
@@ -1689,12 +1913,12 @@ function renderOnboarding() {
     }
     status.textContent = "参加中...";
     try {
-      const result = await joinFamilyByCode(code);
+      const result = await traceAsync("callable.joinFamilyByCode", () => joinFamilyByCode(code));
       status.textContent = result?.ok ? "参加しました" : "参加処理を実行しました";
       state.familyId = result?.familyId ?? state.familyId;
       state.role = result?.role ?? state.role;
       for (let i = 0; i < 3; i += 1) {
-        const me = await getMyUser(auth.currentUser.uid);
+        const me = await traceAsync("firestore.getMyUser", () => getMyUser(auth.currentUser.uid));
         if (me?.familyId) {
           state.familyId = me.familyId;
           break;
@@ -1714,6 +1938,7 @@ function renderOnboarding() {
 }
 
 async function renderHome() {
+  if (prodDebug.enabled) debugLog("render", "renderHome");
   root.innerHTML = `
     <div>
       ${(!view || view === "settings") ? `
@@ -1865,13 +2090,13 @@ async function renderDeclare(panel) {
     const amountType = panel.querySelector("#amountType").value || null;
     const amountValueRaw = panel.querySelector("#amountValue").value;
     try {
-      await declarePlan({
+      await traceAsync("callable.declarePlan", () => declarePlan({
         subjects,
         startAt,
         amountType,
         amountValue: amountValueRaw ? Number(amountValueRaw) : null,
         contentMemo: panel.querySelector("#contentMemo").value || null,
-      });
+      }));
       await showToast("やるよを送ったよ");
       navigateToView("plans");
     } catch (error) {
@@ -1967,12 +2192,12 @@ async function renderSubjects(panel) {
         enabledSubjects,
       });
       try {
-        await updateMySettings(auth.currentUser.uid, {
+        await traceAsync("firestore.updateMySettings", () => updateMySettings(auth.currentUser.uid, {
           subjectPackId: pack.id,
           enabledSubjects: normalized,
           updatedAt: new Date(),
-        });
-        const me = await getMyUser(auth.currentUser.uid);
+        }));
+        const me = await traceAsync("firestore.getMyUser", () => getMyUser(auth.currentUser.uid));
         state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
         await showToast("保存しました。");
         navigateToView("declare");
@@ -2048,12 +2273,12 @@ async function renderPlans(panel) {
     isLoading = true;
     loadingEl.style.display = "block";
     try {
-      const page = await listOpenPlansPage({
+      const page = await traceAsync("firestore.listOpenPlansPage", () => listOpenPlansPage({
         familyId: state.familyId,
         uid: auth.currentUser.uid,
         limitCount: 50,
         cursor,
-      });
+      }));
       cursor = page.cursor;
       hasMore = page.hasMore;
       if (page.items.length === 0 && totalLoaded === 0) {
@@ -2100,7 +2325,7 @@ async function renderPlans(panel) {
         const item = actionBtn.closest(".plan-item");
         if (!item) {
           try {
-            await cancelPlan(planId);
+            await traceAsync("firestore.cancelPlan", () => cancelPlan(planId));
             await showToast("削除しました");
           } catch (error) {
             console.error("cancelPlan failed (no plan-item)", error);
@@ -2125,7 +2350,7 @@ async function renderPlans(panel) {
           updateEmptyState();
         }
         try {
-          await cancelPlan(planId);
+          await traceAsync("firestore.cancelPlan", () => cancelPlan(planId));
           await showToast("削除しました");
         } catch (error) {
           console.error("cancelPlan failed", error);
@@ -2207,7 +2432,7 @@ function renderRecordForm(panel, plan) {
     submitBtn.textContent = "送信中...";
     const memo = panel.querySelector("#recordMemo").value || null;
     try {
-      await recordPlan(plan.id, panel.querySelector("#result").value, memo);
+      await traceAsync("callable.recordPlan", () => recordPlan(plan.id, panel.querySelector("#result").value, memo));
       await showToast("やったよを記録しました");
       await renderStats(panel);
     } catch (error) {
@@ -2221,7 +2446,7 @@ function renderRecordForm(panel, plan) {
 
 async function renderRecord(panel) {
   panel.innerHTML = `<div class="card"><div class="muted">読み込み中...</div></div>`;
-  const plans = await listPlans(state.familyId, auth.currentUser.uid, false, 50);
+  const plans = await traceAsync("firestore.listPlans", () => listPlans(state.familyId, auth.currentUser.uid, false, 50));
   const openPlans = plans.filter((p) => p.status === "declared");
   const preferredPlanId = params.get("planId");
   if (preferredPlanId) {
@@ -2364,7 +2589,7 @@ function createPlanDetailModal(plan) {
 async function fillPlanDetail(overlay, record) {
   const loading = overlay.querySelector("#plan-detail-loading");
   const content = overlay.querySelector("#plan-detail-content");
-  const plan = await getPlanById(record.planId || record.id);
+  const plan = await traceAsync("firestore.getPlanById", () => getPlanById(record.planId || record.id));
   loading.remove();
   content.innerHTML = buildPlanDetailRows(plan);
 }
@@ -2373,7 +2598,7 @@ async function renderStats(panel) {
   panel.innerHTML = "";
   let members;
   try {
-    members = await listFamilyMembers(state.familyId);
+    members = await traceAsync("firestore.listFamilyMembers", () => listFamilyMembers(state.familyId));
   } catch (error) {
     console.error("Query failed: listFamilyMembers", { familyId: state.familyId, error });
     throw error;
@@ -2389,7 +2614,7 @@ async function renderStats(panel) {
 
   let plans;
   try {
-    plans = await listPlans(state.familyId, auth.currentUser.uid, isParent, 500);
+    plans = await traceAsync("firestore.listPlans", () => listPlans(state.familyId, auth.currentUser.uid, isParent, 500));
   } catch (error) {
     console.error("Query failed: listPlans", { familyId: state.familyId, isParent, error });
     throw error;
@@ -2453,14 +2678,14 @@ async function renderStats(panel) {
     isLoading = true;
     loadingEl.style.display = "block";
     try {
-      const page = await listRecordsPage({
+      const page = await traceAsync("firestore.listRecordsPage", () => listRecordsPage({
         familyId: state.familyId,
         uid: auth.currentUser.uid,
         isParent,
         memberFilter: state.memberFilter,
         limitCount: 20,
         cursor,
-      });
+      }));
       cursor = page.cursor;
       hasMore = page.hasMore;
       if (page.items.length === 0 && totalLoaded === 0) {
