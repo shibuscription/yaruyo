@@ -54,6 +54,7 @@ const DEBUG_QUERY_ENABLED = params.get("debug") === "1";
 const DEBUG_UIDS = [
   // Add allowed production debug UIDs here.
 ];
+const DEBUG_HUD_COLLAPSED_KEY = "yaruyo_debug_hud_collapsed";
 const LIFF_ID = "2009111070-71hr5ID2";
 const ENABLE_DEBUG = false;
 const ENABLE_DEBUG_LOG_UPLOAD = false;
@@ -73,6 +74,7 @@ const prodDebug = {
   lastSuccessApi: null,
   lastError: null,
   warning: null,
+  collapsed: false,
 };
 
 function getHashParam(key) {
@@ -295,6 +297,24 @@ function debugAllowed(uid) {
   return DEBUG_UIDS.includes(uid);
 }
 
+function loadDebugHudCollapsed() {
+  if (!prodDebug.requested) return false;
+  try {
+    return localStorage.getItem(DEBUG_HUD_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveDebugHudCollapsed(collapsed) {
+  if (!prodDebug.requested) return;
+  try {
+    localStorage.setItem(DEBUG_HUD_COLLAPSED_KEY, collapsed ? "1" : "0");
+  } catch {
+    // no-op
+  }
+}
+
 function debugNowTime() {
   return new Date().toLocaleTimeString("ja-JP", { hour12: false });
 }
@@ -316,6 +336,7 @@ function activateProdDebug(uid) {
   if (prodDebug.enabled) return;
   prodDebug.enabled = true;
   prodDebug.uid = uid;
+  prodDebug.collapsed = loadDebugHudCollapsed();
   ensureDebugHud();
   debugLog("debug", "prod debug enabled", { uid });
 }
@@ -327,7 +348,7 @@ function ensureDebugHud() {
       <aside class="debug-hud">
         <div class="debug-hud-head">
           <strong>Debug HUD</strong>
-          <span id="debug-hud-status">OK</span>
+          <button type="button" id="debug-hud-status" class="debug-hud-status-btn">OK</button>
         </div>
         <div class="debug-hud-meta" id="debug-hud-meta"></div>
         <div class="debug-hud-section">
@@ -374,6 +395,11 @@ function ensureDebugHud() {
       prodDebug.warning = null;
       renderDebugHud();
     });
+    debugHudEl.querySelector("#debug-hud-status").addEventListener("click", () => {
+      prodDebug.collapsed = !prodDebug.collapsed;
+      saveDebugHudCollapsed(prodDebug.collapsed);
+      renderDebugHud();
+    });
   }
   if (!debugHudWatchdog) {
     debugHudWatchdog = setInterval(() => {
@@ -405,6 +431,7 @@ function renderDebugHud() {
   const tasksEl = debugHudEl.querySelector("#debug-hud-tasks");
   const logsEl = debugHudEl.querySelector("#debug-hud-logs");
   const statusEl = debugHudEl.querySelector("#debug-hud-status");
+  const pendingTaskCount = prodDebug.tasks.size;
   const currentView = new URLSearchParams(location.search).get("view") ?? "declare(tab)";
   metaEl.innerHTML = `
     view: ${escapeHtml(String(currentView))}<br>
@@ -432,6 +459,12 @@ function renderDebugHud() {
     debugHudEl.classList.remove("warn");
     statusEl.textContent = "OK";
     statusEl.title = "";
+  }
+  if (prodDebug.collapsed) {
+    debugHudEl.classList.add("collapsed");
+    statusEl.textContent = `${statusEl.textContent} (${pendingTaskCount})`;
+  } else {
+    debugHudEl.classList.remove("collapsed");
   }
 }
 
@@ -2746,4 +2779,3 @@ if (shouldBoot) {
     });
   });
 }
-

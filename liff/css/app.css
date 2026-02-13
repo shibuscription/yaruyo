@@ -834,6 +834,17 @@ input, select, textarea {
   margin-bottom: 6px;
 }
 
+.debug-hud-status-btn {
+  margin: 0;
+  padding: 2px 8px;
+  min-height: 22px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: #f5f7f6;
+}
+
 .debug-hud-meta {
   margin-bottom: 8px;
   color: #d9e5df;
@@ -865,4 +876,19 @@ input, select, textarea {
   margin: 0;
   padding: 4px 8px;
   font-size: 11px;
+}
+
+.debug-hud.collapsed {
+  max-height: 44px;
+  overflow: hidden;
+}
+
+.debug-hud.collapsed .debug-hud-head {
+  margin-bottom: 0;
+}
+
+.debug-hud.collapsed .debug-hud-meta,
+.debug-hud.collapsed .debug-hud-section,
+.debug-hud.collapsed .debug-hud-actions {
+  display: none;
 }
