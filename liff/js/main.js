@@ -827,14 +827,36 @@ function toDateMaybe(value) {
     const d = new Date(value);
     return Number.isNaN(d.getTime()) ? null : d;
   }
-  if (typeof value === "object" && typeof value.seconds === "number") {
-    return new Date(value.seconds * 1000);
+  if (typeof value === "object") {
+    // joinedAt が Firestore Timestamp 互換({_seconds/_nanoseconds})で来るケースに未対応だと並びが効かない。
+    if (typeof value.seconds === "number") {
+      const nanos = typeof value.nanoseconds === "number" ? value.nanoseconds : 0;
+      return new Date(value.seconds * 1000 + Math.floor(nanos / 1e6));
+    }
+    if (typeof value._seconds === "number") {
+      const nanos = typeof value._nanoseconds === "number" ? value._nanoseconds : 0;
+      return new Date(value._seconds * 1000 + Math.floor(nanos / 1e6));
+    }
   }
   return null;
 }
 
 function sortMembersByJoinedAtAsc(members) {
   return [...members].sort((a, b) => {
+    const at = toDateMaybe(a?.joinedAt)?.getTime();
+    const bt = toDateMaybe(b?.joinedAt)?.getTime();
+    const aKey = Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
+    const bKey = Number.isFinite(bt) ? bt : Number.POSITIVE_INFINITY;
+    if (aKey !== bKey) return aKey - bKey;
+    return String(a?.userId ?? "").localeCompare(String(b?.userId ?? ""));
+  });
+}
+
+function sortMembersByRoleThenJoinedAtAsc(members) {
+  const roleRank = (role) => (role === "parent" ? 0 : role === "child" ? 1 : 2);
+  return [...members].sort((a, b) => {
+    const roleDiff = roleRank(a?.role) - roleRank(b?.role);
+    if (roleDiff !== 0) return roleDiff;
     const at = toDateMaybe(a?.joinedAt)?.getTime();
     const bt = toDateMaybe(b?.joinedAt)?.getTime();
     const aKey = Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
@@ -2795,7 +2817,7 @@ async function renderStats(panel) {
   const userMap = new Map(members.map((m) => [m.userId, m]));
   userMap.set(state.me.uid, { ...state.me, userId: state.me.uid });
 
-  const sortedMembers = sortMembersByJoinedAtAsc(members);
+  const sortedMembers = sortMembersByRoleThenJoinedAtAsc(members);
   const myMember = sortedMembers.find((m) => m.userId === auth.currentUser.uid);
   const isParent = myMember?.role === "parent";
   const memberOptions = [`<option value="all">全員</option>`]
