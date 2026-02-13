@@ -5,6 +5,11 @@ body {
   font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
 }
 
+html,
+body {
+  touch-action: manipulation;
+}
+
 .app {
   max-width: 760px;
   margin: 0 auto;
@@ -100,10 +105,15 @@ button.secondary {
 input, select, textarea {
   width: 100%;
   box-sizing: border-box;
+  font-size: 16px;
   padding: 10px;
   margin: 6px 0 10px;
   border-radius: 8px;
   border: 1px solid #d4d4d4;
+}
+
+button {
+  font-size: 16px;
 }
 
 .row {
