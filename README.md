@@ -171,6 +171,7 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
 -   メンバー一覧（親/子グループ、アイコン、自分バッジ）
 -   招待コード（親のみ表示、親用/子用コピー可）
 -   「家族をぬける」導線（confirmあり）
+-   親のみ「家族を作り直す」導線（confirmあり）
 -   最後の親は leaveFamily で拒否
 
 ### 🟢 教科のカスタマイズ（view=subjects）
@@ -225,7 +226,9 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
 -   plan削除は物理deleteせず cancelled 更新
 -   users 更新可能フィールドに `subjectPackId`, `enabledSubjects(<=10)` を追加
 -   家族離脱は Callable `leaveFamily` で実施（最後の親はサーバ側で拒否）
+-   家族終了は Callable `closeFamily` で実施（members削除・inviteCodes無効化・全員familyId解除）
 -   家族名変更は Callable `updateFamilyName`（parentのみ、1〜20文字）
+-   joinFamilyByCode は `invite.active=true` / `family.status!=closed` / `child参加時 active parent>=1` を確認
 
 ------------------------------------------------------------------------
 

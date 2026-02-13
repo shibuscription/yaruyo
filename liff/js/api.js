@@ -170,6 +170,10 @@ export async function leaveFamily() {
   return (await httpsCallable(functions, "leaveFamily")({})).data;
 }
 
+export async function closeFamily() {
+  return (await httpsCallable(functions, "closeFamily")({})).data;
+}
+
 export async function updateFamilyName(name) {
   return (await httpsCallable(functions, "updateFamilyName")({ name })).data;
 }

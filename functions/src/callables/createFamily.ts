@@ -27,6 +27,7 @@ export const createFamily = onCall({ region: "asia-northeast1" }, async (request
 
       tx.set(db.doc(`families/${familyId}`), {
         name: `${createdByDisplayName}の家族`,
+        status: "active",
         createdBy: uid,
         createdAt: SERVER_TIMESTAMP,
         updatedAt: SERVER_TIMESTAMP,

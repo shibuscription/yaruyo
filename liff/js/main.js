@@ -8,6 +8,7 @@
   getMyUser,
   getPlanById,
   joinFamilyByCode,
+  closeFamily as closeFamilyCallable,
   leaveFamily,
   listFamilyMembers,
   listInviteCodes,
@@ -1370,7 +1371,14 @@ async function createFamilyContent() {
           : ""
       }
       <section class="family-section family-danger-zone">
-        <button type="button" id="leave-family-btn" class="family-leave-btn ${isLastParent ? "leave-disabled" : ""}">家族をぬける</button>
+        <div class="family-danger-actions">
+          <button type="button" id="leave-family-btn" class="family-leave-btn ${isLastParent ? "leave-disabled" : ""}">家族をぬける</button>
+          ${
+            isParent
+              ? '<button type="button" id="close-family-btn" class="family-leave-btn">家族を作り直す</button>'
+              : ""
+          }
+        </div>
       </section>
     </div>
   `;
@@ -1447,6 +1455,40 @@ async function createFamilyContent() {
         await showToast(toUserErrorMessage(error));
         leaveBtn.disabled = false;
         leaveBtn.textContent = original;
+      }
+    });
+  }
+
+  const closeFamilyBtn = wrapper.querySelector("#close-family-btn");
+  if (closeFamilyBtn) {
+    closeFamilyBtn.addEventListener("click", async () => {
+      if (closeFamilyBtn.disabled) return;
+      const ok = await showConfirmModal({
+        title: "家族を作り直しますか？",
+        message:
+          "現在の家族は終了し、全員が家族から外れます。\n招待コードは無効になります。\n\n※予定や記録のデータは削除されません。",
+        okText: "作り直す",
+        cancelText: "やめる",
+      });
+      if (!ok) return;
+      closeFamilyBtn.disabled = true;
+      const original = closeFamilyBtn.textContent;
+      closeFamilyBtn.textContent = "処理中...";
+      try {
+        await closeFamilyCallable();
+        const me = await getMyUser(uid);
+        state.me = { uid, ...(me ?? {}) };
+        state.familyId = null;
+        state.role = null;
+        closeFamilyModal();
+        closeSettingsModal();
+        await showToast("家族を作り直しました");
+        await render();
+      } catch (error) {
+        console.error("closeFamily failed", error);
+        await showToast(toUserErrorMessage(error));
+        closeFamilyBtn.disabled = false;
+        closeFamilyBtn.textContent = original;
       }
     });
   }

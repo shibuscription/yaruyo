@@ -37,10 +37,29 @@ export const joinFamilyByCode = onCall({ region: "asia-northeast1" }, async (req
     const role = inviteData.role as "parent" | "child";
 
     await db.runTransaction(async (tx) => {
+      const inviteLatestSnap = await tx.get(inviteDoc.ref);
+      assertCondition(inviteLatestSnap.exists, "not-found", "Invite code not found.");
+      assertCondition(inviteLatestSnap.data()?.active === true, "failed-precondition", "Invite code is inactive.");
+
+      const familySnap = await tx.get(familyRef);
+      assertCondition(familySnap.exists, "not-found", "Family not found.");
+      const familyStatus = (familySnap.data()?.status as string | undefined) ?? "active";
+      assertCondition(familyStatus !== "closed", "failed-precondition", "Family is closed.");
+
       const userRef = db.doc(`users/${uid}`);
       const userSnap = await tx.get(userRef);
       const userFamilyId = (userSnap.data()?.familyId as string | null) ?? null;
       assertCondition(!userFamilyId, "failed-precondition", "User already belongs to a family.");
+
+      if (role === "child") {
+        const activeParentsSnap = await tx.get(
+          db
+            .collection(`families/${familyId}/members`)
+            .where("role", "==", "parent")
+            .limit(1),
+        );
+        assertCondition(activeParentsSnap.size > 0, "failed-precondition", "Active parent is required.");
+      }
 
       const memberRef = db.doc(`families/${familyId}/members/${uid}`);
       const memberSnap = await tx.get(memberRef);
