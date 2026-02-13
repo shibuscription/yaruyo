@@ -2,6 +2,7 @@ import { logger } from "firebase-functions";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { db, SERVER_TIMESTAMP } from "../lib/firestore.js";
 import { logDocIdFromDedupeKey, sendLinePush, writeNotificationLogIdempotent } from "../lib/notification.js";
+import { subjectsLabel } from "../lib/subjects.js";
 import { formatStartSlotTimeJst, startSlotRangeWithBufferJst } from "../lib/timeJst.js";
 const BUFFER_MINUTES = 5;
 function subjectText(plan) {
@@ -9,17 +10,7 @@ function subjectText(plan) {
         return plan.subject;
     }
     if (Array.isArray(plan.subjects) && plan.subjects.length > 0) {
-        const labels = {
-            en: "英語",
-            math: "数学",
-            jp: "国語",
-            sci: "理科",
-            soc: "社会",
-            other: "その他",
-        };
-        return plan.subjects
-            .map((v) => labels[v] ?? v)
-            .join("・");
+        return subjectsLabel(plan.subjects);
     }
     return "勉強";
 }

@@ -1,4 +1,4 @@
-import {
+﻿import {
   auth,
   cancelPlan,
   createFamily,
@@ -22,7 +22,13 @@ import {
   writeDebugLog,
 } from "./api.js";
 import { state } from "./state.js";
-import { subjectLabel } from "./subjectDict.js";
+import {
+  SUBJECT_PACKS,
+  getPackById,
+  getPackEntries,
+  getSubjectLabel,
+  resolveEnabledSubjects,
+} from "./subjects.js";
 
 function normalizeLiffUrl() {
   const { pathname, search, hash } = window.location;
@@ -38,7 +44,7 @@ const root = document.getElementById("app-root");
 const params = new URLSearchParams(location.search);
 const rawView = params.get("view");
 const mappedView = rawView === "yaruyo" ? "declare" : rawView;
-const view = ["declare", "record", "stats", "settings", "plans"].includes(mappedView) ? mappedView : null;
+const view = ["declare", "record", "stats", "settings", "plans", "subjects"].includes(mappedView) ? mappedView : null;
 const SETTINGS_DEBUG = params.get("debug") === "1";
 const LIFF_ID = "2009111070-71hr5ID2";
 const ENABLE_DEBUG = false;
@@ -86,6 +92,7 @@ const UI = {
   sectionRecord: "やったよ",
   sectionPlan: "やるよ",
   placeholder: "—",
+  subjectCustomizeTitle: "教科のカスタマイズ",
 };
 
 let currentPanel = null;
@@ -450,6 +457,27 @@ function formatStartSlotTime(slot) {
   return `${slot.slice(8, 10)}:${slot.slice(10, 12)}`;
 }
 
+function normalizePackSelection(packId) {
+  return getPackById(packId ?? state.me?.subjectPackId ?? "middle");
+}
+
+function getEffectiveSubjectConfig(user = state.me) {
+  const pack = normalizePackSelection(user?.subjectPackId);
+  const enabledSubjects = resolveEnabledSubjects({
+    packId: pack.id,
+    enabledSubjects: user?.enabledSubjects,
+  });
+  return {
+    pack,
+    entries: getPackEntries(pack.id),
+    enabledSubjects,
+  };
+}
+
+function subjectDisplay(code) {
+  return getSubjectLabel(code);
+}
+
 function resultLabel(value) {
   if (value === "light") return "軽め";
   if (value === "as_planned") return "予定通り";
@@ -790,15 +818,19 @@ async function tryCloseLiffWindow() {
   if (history.length > 1) history.back();
 }
 
-function panelTitleHtml(title, { showGear = true } = {}) {
+function panelTitleHtml(title, { showGear = true, showSubjects = false } = {}) {
+  const actionButtons = [
+    showSubjects
+      ? '<button type="button" class="icon-btn panel-subjects-btn" aria-label="subjects">📚</button>'
+      : "",
+    showGear
+      ? '<button type="button" class="icon-btn panel-settings-btn" aria-label="settings">&#9881;</button>'
+      : "",
+  ].join("");
   return `
     <div class="panel-title-row">
       <h3>${escapeHtml(title)}</h3>
-      ${
-        showGear
-          ? '<button type="button" class="icon-btn panel-settings-btn" aria-label="settings">&#9881;</button>'
-          : ""
-      }
+      <div class="panel-actions">${actionButtons}</div>
     </div>
   `;
 }
@@ -891,6 +923,10 @@ function toUserErrorMessage(error) {
 }
 
 function bindPanelGear(container) {
+  const subjectBtn = container.querySelector(".panel-subjects-btn");
+  if (subjectBtn) {
+    subjectBtn.addEventListener("click", () => navigateToView("subjects"));
+  }
   const btn = container.querySelector(".panel-settings-btn");
   if (!btn) return;
   btn.addEventListener("click", () => {
@@ -1307,6 +1343,7 @@ async function renderHome() {
   if (view === "record") await renderRecord(currentPanel);
   else if (view === "stats") await renderStats(currentPanel);
   else if (view === "settings") renderSettingsPage(currentPanel);
+  else if (view === "subjects") await renderSubjects(currentPanel);
   else if (view === "plans") await renderPlans(currentPanel);
   else await renderDeclare(currentPanel);
 }
@@ -1318,20 +1355,23 @@ async function renderDeclare(panel) {
       ? `<button id="go-plans" type="button" class="link-btn">ほかのやるよ（${openPlans.length}）</button>`
       : "";
   const startOptions = buildStartTimeOptions().map((opt) => `<option value="${opt.value}">${opt.label}</option>`).join("");
-  const subjectOptions = [
-    { code: "en", label: "英語" },
-    { code: "math", label: "数学" },
-    { code: "jp", label: "国語" },
-    { code: "sci", label: "理科" },
-    { code: "soc", label: "社会" },
-    { code: "other", label: "その他" },
-  ];
-  const subjectButtons = subjectOptions.map((s) => `<button type="button" class="subject-btn" data-subject="${s.code}">${s.label}</button>`).join("");
+  const subjectConfig = getEffectiveSubjectConfig();
+  const visibleCodes = subjectConfig.enabledSubjects.length > 0
+    ? subjectConfig.enabledSubjects
+    : subjectConfig.entries.slice(0, subjectConfig.pack.maxEnabled).map((entry) => entry.code);
+  const visibleCodeSet = new Set(visibleCodes);
+  const subjectButtons = subjectConfig.entries
+    .filter((entry) => visibleCodeSet.has(entry.code))
+    .map((entry) => {
+      const label = entry.emoji ? `${entry.emoji} ${entry.label}` : entry.label;
+      return `<button type="button" class="subject-btn" data-subject="${entry.code}">${escapeHtml(label)}</button>`;
+    })
+    .join("");
   const amountValues = ['<option value="">-</option>'].concat(Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`)).join("");
 
   panel.innerHTML = `
     <div class="card">
-      ${panelTitleHtml(UI.declareTitle, { showGear: view !== "settings" })}
+      ${panelTitleHtml(UI.declareTitle, { showGear: view !== "settings", showSubjects: true })}
       <label for="startAt">${UI.labelWhen}</label>
       <select id="startAt">${startOptions}</select>
       <div>${UI.labelWhat}</div>
@@ -1414,6 +1454,99 @@ async function renderDeclare(panel) {
   };
 }
 
+async function renderSubjects(panel) {
+  let pack = normalizePackSelection(state.me?.subjectPackId);
+  let enabledSubjects = resolveEnabledSubjects({
+    packId: pack.id,
+    enabledSubjects: state.me?.enabledSubjects,
+  });
+
+  const renderPanel = () => {
+    const entries = getPackEntries(pack.id);
+    const enabledSet = new Set(enabledSubjects);
+    const count = enabledSubjects.length;
+    const grouped = entries.reduce((acc, entry) => {
+      const key = pack.showCategories ? entry.category : "_flat";
+      if (!acc.has(key)) acc.set(key, []);
+      acc.get(key).push(entry);
+      return acc;
+    }, new Map());
+
+    const listHtml = Array.from(grouped.entries())
+      .map(([category, items]) => {
+        const categoryTitle = pack.showCategories ? `<div class="subject-category-title">${escapeHtml(category)}</div>` : "";
+        const buttons = items
+          .map((entry) => {
+            const active = enabledSet.has(entry.code);
+            const label = entry.emoji ? `${entry.emoji} ${entry.label}` : entry.label;
+            return `<button type="button" class="subject-pick-btn ${active ? "active" : ""}" data-code="${entry.code}" aria-pressed="${active}">${escapeHtml(label)}</button>`;
+          })
+          .join("");
+        return `<div class="subject-category">${categoryTitle}<div class="subject-pick-grid">${buttons}</div></div>`;
+      })
+      .join("");
+
+    panel.innerHTML = `
+      <div class="card">
+        ${panelTitleHtml(UI.subjectCustomizeTitle, { showGear: view !== "settings" })}
+        <button type="button" id="subjects-back" class="secondary plans-back-btn">← 戻る</button>
+        <label for="subject-pack-select">プリセット</label>
+        <select id="subject-pack-select">
+          ${SUBJECT_PACKS.map((p) => `<option value="${p.id}" ${p.id === pack.id ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("")}
+        </select>
+        <div class="muted subject-count">${count}/${pack.maxEnabled}</div>
+        <div id="subject-pick-list">${listHtml}</div>
+        <button type="button" id="save-subject-settings">保存する</button>
+      </div>
+    `;
+    bindPanelGear(panel);
+
+    panel.querySelector("#subjects-back").onclick = () => navigateToView("declare");
+    panel.querySelector("#subject-pack-select").addEventListener("change", (e) => {
+      pack = normalizePackSelection(e.target.value);
+      enabledSubjects = resolveEnabledSubjects({ packId: pack.id, enabledSubjects: [] });
+      renderPanel();
+    });
+
+    panel.querySelectorAll(".subject-pick-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const code = btn.dataset.code;
+        if (!code) return;
+        const exists = enabledSubjects.includes(code);
+        if (exists) {
+          enabledSubjects = enabledSubjects.filter((v) => v !== code);
+          renderPanel();
+          return;
+        }
+        if (enabledSubjects.length >= pack.maxEnabled) {
+          await showToast(`教科は最大${pack.maxEnabled}個までです`);
+          return;
+        }
+        enabledSubjects = [...enabledSubjects, code];
+        renderPanel();
+      });
+    });
+
+    panel.querySelector("#save-subject-settings").addEventListener("click", async () => {
+      const normalized = resolveEnabledSubjects({
+        packId: pack.id,
+        enabledSubjects,
+      });
+      await updateMySettings(auth.currentUser.uid, {
+        subjectPackId: pack.id,
+        enabledSubjects: normalized,
+        updatedAt: new Date(),
+      });
+      const me = await getMyUser(auth.currentUser.uid);
+      state.me = { uid: auth.currentUser.uid, ...(me ?? {}) };
+      await showToast("保存しました。");
+      navigateToView("declare");
+    });
+  };
+
+  renderPanel();
+}
+
 async function renderPlans(panel) {
   panel.innerHTML = `
     <div class="card">
@@ -1443,7 +1576,7 @@ async function renderPlans(panel) {
   };
 
   const renderPlanItem = (plan) => {
-    const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectLabel).join("・") : UI.placeholder;
+    const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectDisplay).join("・") : UI.placeholder;
     const startTime = formatStartSlotTime(plan.startSlot);
     return `
       <div class="plan-item" data-plan-id="${escapeHtml(plan.id)}" role="button" tabindex="0">
@@ -1550,7 +1683,7 @@ async function renderPlans(panel) {
 }
 
 function planSummary(plan) {
-  const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
+  const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectDisplay).join(", ") : UI.placeholder;
   const when = formatPlanStart(plan);
   const created = formatDateTime(plan.createdAt);
   return { subjects, when, created };
@@ -1685,7 +1818,7 @@ function buildPlanDetailRows(plan) {
       <div class="section-row"><div class="section-label">${UI.memo}</div><div class="section-value">${UI.placeholder}</div></div>
     `;
   }
-  const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
+  const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectDisplay).join(", ") : UI.placeholder;
   const start = formatPlanStart(plan);
   let amount = UI.placeholder;
   if (plan.amountType && plan.amountValue != null) {
@@ -1789,7 +1922,7 @@ async function renderStats(panel) {
   const renderRecordCard = (record) => {
     const user = userMap.get(record.userId) || { userId: record.userId };
     const plan = planMap.get(record.planId || record.id);
-    const planSubjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectLabel).join(", ") : UI.placeholder;
+    const planSubjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectDisplay).join(", ") : UI.placeholder;
     const planStart = formatPlanStart(plan);
     const memoPreview = record.memo ? `<div class="record-memo">${escapeHtml(String(record.memo))}</div>` : "";
     return `
@@ -1880,3 +2013,4 @@ if (shouldBoot) {
     });
   });
 }
+

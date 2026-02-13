@@ -5,6 +5,7 @@ import { db, SERVER_TIMESTAMP } from "../lib/firestore.js";
 import { ensureUserDoc } from "../lib/auth.js";
 import { eventDisplayName, getUserFamilyId } from "../lib/domain.js";
 import { notifyRecipients } from "../lib/notification.js";
+import { subjectsLabel } from "../lib/subjects.js";
 import { formatStartSlotTimeJst, roundTo30MinutesJst } from "../lib/timeJst.js";
 export const declarePlan = onCall({ region: "asia-northeast1" }, async (request) => {
     try {
@@ -76,19 +77,11 @@ export const declarePlan = onCall({ region: "asia-northeast1" }, async (request)
                 recipients.push(memberDoc.id);
             }
         }));
-        const subjectLabels = {
-            en: "英語",
-            math: "数学",
-            jp: "国語",
-            sci: "理科",
-            soc: "社会",
-            other: "その他",
-        };
-        const subjectsLabel = body.subjects.map((subject) => subjectLabels[subject] ?? subject).join("・");
+        const subjectsText = subjectsLabel(body.subjects);
         const startTime = startSlot ? formatStartSlotTimeJst(startSlot) : null;
         const msg = startTime
-            ? `${actorDisplayName}が${startTime}から「${subjectsLabel}」をやるよ ✏️`
-            : `${actorDisplayName}が「${subjectsLabel}」をやるよ ✏️`;
+            ? `${actorDisplayName}が${startTime}から「${subjectsText}」をやるよ ✏️`
+            : `${actorDisplayName}が「${subjectsText}」をやるよ ✏️`;
         console.log("PLAN_NOTIFY_MESSAGE", msg, "subjects=", body.subjects, "startSlot=", startSlot);
         console.log("RECIPIENTS_CHECK", recipients);
         await notifyRecipients({

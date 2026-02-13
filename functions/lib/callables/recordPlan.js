@@ -4,6 +4,7 @@ import { eventDisplayName } from "../lib/domain.js";
 import { assertAuth, assertCondition, toInternalError } from "../lib/errors.js";
 import { db, SERVER_TIMESTAMP } from "../lib/firestore.js";
 import { notifyRecipients } from "../lib/notification.js";
+import { subjectsLabel } from "../lib/subjects.js";
 function isValidResult(result) {
     return result === "light" || result === "as_planned" || result === "extra";
 }
@@ -98,15 +99,7 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
         const payload = (eventSnap.data()?.payloadForMessage ?? {});
         const actorDisplayName = typeof payload.actorDisplayName === "string" ? payload.actorDisplayName : uid;
         const subjects = Array.isArray(payload.subjects) ? payload.subjects : [];
-        const subjectLabels = {
-            en: "英語",
-            math: "数学",
-            jp: "国語",
-            sci: "理科",
-            soc: "社会",
-            other: "その他",
-        };
-        const subjectLabel = subjects.length > 0 ? subjects.map((subject) => subjectLabels[subject] ?? subject).join("・") : "勉強";
+        const subjectText = subjects.length > 0 ? subjectsLabel(subjects) : "勉強";
         const resultJa = body.result === "light" ? "軽めに" : body.result === "as_planned" ? "予定どおり" : "多めに";
         await notifyRecipients({
             familyId: txResult.familyId,
@@ -114,7 +107,7 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
             type: "activity_record",
             actorUserId: uid,
             recipientIds: recipients,
-            messageBuilder: () => `${actorDisplayName}が「${subjectLabel}」をやったよ！🏆\n（${resultJa}）`,
+            messageBuilder: () => `${actorDisplayName}が「${subjectText}」をやったよ！🏆\n（${resultJa}）`,
         });
         return {
             ok: true,

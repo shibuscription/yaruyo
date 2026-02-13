@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
-require('dotenv').config({ path: '.env.richmenu' });
-
 const fs = require("node:fs");
 const path = require("node:path");
+const dotenv = require("dotenv");
+
+const envProdPath = path.resolve(__dirname, ".env.prod");
+const envDefaultPath = path.resolve(__dirname, ".env");
+if (fs.existsSync(envProdPath)) {
+  dotenv.config({ path: envProdPath });
+} else if (fs.existsSync(envDefaultPath)) {
+  dotenv.config({ path: envDefaultPath });
+}
 
 const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 const LIFF_ID = process.env.LIFF_ID;
 const RICHMENU_IMAGE_PATH = process.env.RICHMENU_IMAGE_PATH;
 const YARUYO_BUILD_ID = process.env.YARUYO_BUILD_ID;
+const CLI_BUILD_ID = (process.argv[2] || "").trim();
 
 function requireEnv(name, value) {
   if (!value) {
@@ -73,7 +81,7 @@ async function main() {
   if (!fs.existsSync(RICHMENU_IMAGE_PATH)) {
     throw new Error(`Image file not found: ${RICHMENU_IMAGE_PATH}`);
   }
-  const buildId = YARUYO_BUILD_ID || buildIdNow();
+  const buildId = CLI_BUILD_ID || YARUYO_BUILD_ID || buildIdNow();
   console.log(`Using build id: ${buildId}`);
 
   const richMenuRequest = {

@@ -65,8 +65,21 @@ service cloud.firestore {
           "notifyActivityPlan",
           "notifyActivityRecord",
           "notificationSettings",
+          "subjectPackId",
+          "enabledSubjects",
           "updatedAt"
-        ]);
+        ])
+        && (
+          !("subjectPackId" in request.resource.data)
+          || request.resource.data.subjectPackId is string
+        )
+        && (
+          !("enabledSubjects" in request.resource.data)
+          || (
+            request.resource.data.enabledSubjects is list
+            && request.resource.data.enabledSubjects.size() <= 10
+          )
+        );
       allow delete: if false;
     }
 

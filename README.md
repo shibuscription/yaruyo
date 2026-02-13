@@ -82,7 +82,8 @@ Running in emulator mode. Do not use with production credentials.
 ?view=record\
 ?view=stats\
 ?view=plans\
-?view=settings
+?view=settings\
+?view=subjects
 
 指定時：
 
@@ -127,6 +128,8 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
 
 -   宣言成功後はトースト表示後に `view=plans` へ遷移
 -   右端リンク `ほかのやるよ（N）`（N>0のときのみ表示）
+-   教科ボタンはユーザー設定で有効化した教科（最大10）を表示
+-   タイトル行の `📚` から教科カスタマイズへ遷移
 
 ### 🟢 やったよ
 
@@ -153,6 +156,22 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
 -   通知設定（やるよ / やったよ / 開始時刻リマインド）
 -   家族招待コード（親用 / 子用、コピー可）
 -   UIDは短縮表示 + コピー対応（`?debug=1` でフルUID表示）
+
+### 🟢 教科のカスタマイズ（view=subjects）
+
+-   プリセット（小学生 / 中学生 / 高校生）を選択
+-   教科ON/OFFを選択して保存（最大10）
+-   `showCategories=true` のパック（高校生）のみカテゴリ見出し表示
+-   `other` も通常教科としてON/OFF対象（特別枠なし）
+-   保存先: `users.subjectPackId`, `users.enabledSubjects`
+-   並び順ポリシー:
+    -   先頭は `英 → 数 → 国 → 理 → 社`
+    -   その後に実技・その他
+    -   `other` は常に最後
+-   defaultEnabled:
+    -   小学生: `arith / jp / sci / soc / other`（`en` はOFF）
+    -   中学生: `en / math / jp / sci / soc / other`（実技はOFF）
+    -   高校生: `en / math / jp / other`（理科・地歴・公民・実技はOFF）
 
 ------------------------------------------------------------------------
 
@@ -188,6 +207,7 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
 -   インデックス管理化（firestore.indexes.json）
 -   inviteCodes は parent のみ read
 -   plan削除は物理deleteせず cancelled 更新
+-   users 更新可能フィールドに `subjectPackId`, `enabledSubjects(<=10)` を追加
 
 ------------------------------------------------------------------------
 
@@ -212,14 +232,19 @@ firebase deploy --only firestore:indexes
 
 ### LINEリッチメニュー作成
 
-環境変数を設定して実行（`v=` 付きURLで強キャッシュ対策）:
+`scripts/.env.prod`（なければ `scripts/.env`）を読み込んで実行:
 
-`LINE_CHANNEL_ACCESS_TOKEN=...`
-`LIFF_ID=2009111070-71hr5ID2`
-`RICHMENU_IMAGE_PATH=...`
-`YARUYO_BUILD_ID=20260213-1`（任意。未指定時は実行時刻で自動生成）
+1. `scripts/.env.prod.example` をコピーして `scripts/.env.prod` を作成
+2. 以下を設定
+   - `LINE_CHANNEL_ACCESS_TOKEN`
+   - `LIFF_ID`
+   - `RICHMENU_IMAGE_PATH`
+   - `YARUYO_BUILD_ID`（任意）
 
-`node scripts/createRichMenu.js`
+実行:
+
+- `node scripts/createRichMenu.js`（build id 自動生成）
+- `node scripts/createRichMenu.js 20260214-1`（CLI引数で build id 指定）
 
 推奨運用順:
 
