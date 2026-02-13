@@ -758,31 +758,34 @@ async function syncLiffProfile(uid) {
   }
 }
 
-function ceilToHalfHour(date) {
-  const d = new Date(date);
-  d.setSeconds(0, 0);
-  const m = d.getMinutes();
-  if (m === 0 || m === 30) return d;
-  if (m < 30) d.setMinutes(30);
-  else {
-    d.setHours(d.getHours() + 1);
-    d.setMinutes(0);
+const JST_OFFSET_MINUTES = 9 * 60;
+const JST_OFFSET_MS = JST_OFFSET_MINUTES * 60 * 1000;
+
+function buildStartTimeOptionsNowJst(now = new Date()) {
+  const result = [{ label: "未定", value: "" }];
+  const jstNow = new Date(now.getTime() + JST_OFFSET_MS);
+  const year = jstNow.getUTCFullYear();
+  const month = jstNow.getUTCMonth();
+  const day = jstNow.getUTCDate();
+  const minutesNow = jstNow.getUTCHours() * 60 + jstNow.getUTCMinutes();
+  const startMinutes = minutesNow % 30 === 0 ? minutesNow : minutesNow + (30 - (minutesNow % 30));
+  const lastMinutes = 23 * 60 + 30;
+
+  if (startMinutes > lastMinutes) {
+    return result;
   }
-  return d;
+
+  for (let minutes = startMinutes; minutes <= lastMinutes; minutes += 30) {
+    const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
+    const mm = String(minutes % 60).padStart(2, "0");
+    const utcMs = Date.UTC(year, month, day, Math.floor(minutes / 60), minutes % 60) - JST_OFFSET_MS;
+    result.push({ label: `${hh}:${mm}`, value: new Date(utcMs).toISOString() });
+  }
+  return result;
 }
 
 function buildStartTimeOptions() {
-  const now = new Date();
-  const start = ceilToHalfHour(now);
-  const end = new Date(now);
-  end.setHours(21, 30, 0, 0);
-  const result = [{ label: "未定", value: "" }];
-  for (let t = new Date(start); t <= end; t = new Date(t.getTime() + 30 * 60 * 1000)) {
-    const hh = String(t.getHours()).padStart(2, "0");
-    const mm = String(t.getMinutes()).padStart(2, "0");
-    result.push({ label: `${hh}:${mm}`, value: t.toISOString() });
-  }
-  return result;
+  return buildStartTimeOptionsNowJst();
 }
 
 function navigateToView(nextView) {
@@ -1256,6 +1259,13 @@ function renderOnboarding() {
   const status = root.querySelector("#join-status");
 
   createBtn.addEventListener("click", async () => {
+    const ok = await showConfirmModal({
+      title: "家族を作成しますか？",
+      message: "この端末のユーザーが「親」として家族を作成します。\nあとから家族に参加する人へ招待コードを共有できます。",
+      okText: "作成する",
+      cancelText: "やめる",
+    });
+    if (!ok) return;
     createBtn.disabled = true;
     const original = createBtn.textContent;
     createBtn.textContent = "作成中...";
@@ -1281,6 +1291,13 @@ function renderOnboarding() {
       await showToast("コードを入力してね");
       return;
     }
+    const ok = await showConfirmModal({
+      title: "家族に参加しますか？",
+      message: `招待コード: ${code}\n招待コードを確認して参加します。`,
+      okText: "参加する",
+      cancelText: "やめる",
+    });
+    if (!ok) return;
     joinBtn.disabled = true;
     const original = joinBtn.textContent;
     joinBtn.textContent = "参加中...";
@@ -1440,6 +1457,15 @@ async function renderDeclare(panel) {
       return;
     }
     const startAt = panel.querySelector("#startAt").value || null;
+    if (!startAt) {
+      const ok = await showConfirmModal({
+        title: "開始時刻が「未定」だけど、だいじょうぶ？",
+        message: "開始時刻を決めずに作ります。あとから変更はできません。",
+        okText: "このままやるよ",
+        cancelText: "選びなおす",
+      });
+      if (!ok) return;
+    }
     const amountType = panel.querySelector("#amountType").value || null;
     const amountValueRaw = panel.querySelector("#amountValue").value;
     await declarePlan({
@@ -1449,7 +1475,7 @@ async function renderDeclare(panel) {
       amountValue: amountValueRaw ? Number(amountValueRaw) : null,
       contentMemo: panel.querySelector("#contentMemo").value || null,
     });
-    await showToast("やるよを宣言しました");
+    await showToast("やるよを送ったよ");
     navigateToView("plans");
   };
 }
@@ -1574,6 +1600,16 @@ async function renderPlans(panel) {
   const updateTitle = () => {
     titleEl.textContent = totalLoaded > 0 ? `ほかのやるよ（${totalLoaded}）` : "ほかのやるよ";
   };
+  const updateEmptyState = () => {
+    if (totalLoaded === 0) {
+      listEl.innerHTML = `<div class="muted">ほかのやるよはありません</div>`;
+    } else {
+      const empty = listEl.querySelector(".muted");
+      if (empty && empty.textContent === "ほかのやるよはありません") {
+        empty.remove();
+      }
+    }
+  };
 
   const renderPlanItem = (plan) => {
     const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectDisplay).join("・") : UI.placeholder;
@@ -1641,13 +1677,52 @@ async function renderPlans(panel) {
           cancelText: "やめる",
         });
         if (!ok) return;
+        actionBtn.disabled = true;
+        const item = actionBtn.closest(".plan-item");
+        if (!item) {
+          try {
+            await cancelPlan(planId);
+            await showToast("削除しました");
+          } catch (error) {
+            console.error("cancelPlan failed (no plan-item)", error);
+            await showToast("削除に失敗しました");
+          } finally {
+            actionBtn.disabled = false;
+            await renderPlans(panel);
+          }
+          return;
+        }
+        const nextSibling = item?.nextSibling ?? null;
+        const parent = item?.parentNode ?? null;
+        const plan = planMap.get(planId) ?? null;
+        const hadPlan = !!plan;
+        item.style.opacity = "0.2";
+        item.style.pointerEvents = "none";
+        item.remove();
+        if (hadPlan) {
+          planMap.delete(planId);
+          totalLoaded = Math.max(0, totalLoaded - 1);
+          updateTitle();
+          updateEmptyState();
+        }
         try {
           await cancelPlan(planId);
           await showToast("削除しました");
-          await renderPlans(panel);
         } catch (error) {
           console.error("cancelPlan failed", error);
-          await showToast(toUserErrorMessage(error));
+          if (parent && item) {
+            parent.insertBefore(item, nextSibling);
+            item.style.opacity = "";
+            item.style.pointerEvents = "";
+          }
+          if (hadPlan && plan) {
+            planMap.set(planId, plan);
+            totalLoaded += 1;
+            updateTitle();
+            updateEmptyState();
+          }
+          actionBtn.disabled = false;
+          await showToast("削除に失敗しました");
         }
       }
       return;
