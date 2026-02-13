@@ -18,6 +18,7 @@
   listRecords,
   recordPlan,
   signInWithLineIdToken,
+  signInWithLineIdTokenHttp,
   subscribeMyUser,
   updateFamilyName,
   updateMySettings,
@@ -138,9 +139,12 @@ let confirmModalOpen = false;
 const globalState = window;
 let currentBootPhase = "BOOT";
 let loadingBannerEl = null;
+let loadingBannerTimer = null;
+let loadingBannerStartedAtMs = 0;
 let globalErrorHandlersRegistered = false;
 let preDebugStartedAtMs = 0;
 let preDebugLastError = null;
+let preDebugStep = "-";
 
 function extractErrorMeta(error) {
   if (error instanceof Error) {
@@ -227,6 +231,12 @@ function setPreDebugError(error) {
   renderPreDebugHud();
 }
 
+function setPreDebugStep(step) {
+  if (!DEBUG_QUERY_ENABLED) return;
+  preDebugStep = step;
+  renderPreDebugHud();
+}
+
 function renderPreDebugHud() {
   if (!DEBUG_QUERY_ENABLED || !preDebugHudEl || prodDebug.enabled) return;
   const body = preDebugHudEl.querySelector("#pre-debug-body");
@@ -235,9 +245,50 @@ function renderPreDebugHud() {
   body.innerHTML = [
     `elapsed: ${elapsedSec}s`,
     `phase: ${escapeHtml(currentBootPhase)}`,
+    `step: ${escapeHtml(preDebugStep)}`,
     `net: ${navigator.onLine ? "online" : "offline"}`,
     `lastError: ${escapeHtml(preDebugLastError ?? "-")}`,
   ].join("<br>");
+}
+
+function withDebugTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        const error = new Error(`timeout: ${label}`);
+        if (DEBUG_QUERY_ENABLED) {
+          setPreDebugError(error);
+          console.warn(`[DEBUG_TIMEOUT] ${label}`, { ms });
+        }
+        reject(error);
+      }, ms);
+    }),
+  ]);
+}
+
+async function callSignInWithRetry(idToken) {
+  const appId = LIFF_ID.split("-")[0];
+  try {
+    return await withDebugTimeout(signInWithLineIdToken(idToken, appId), 15000, "signInWithLineIdToken");
+  } catch (err) {
+    const msg = err?.message ?? "";
+    if (typeof msg === "string" && msg.includes("timeout")) {
+      if (DEBUG_QUERY_ENABLED) {
+        console.warn("[RETRY] signInWithLineIdToken retrying once...");
+      }
+      setPreDebugStep("auth:fallback:http:start");
+      try {
+        const result = await signInWithLineIdTokenHttp(idToken, appId, 15000);
+        setPreDebugStep("auth:fallback:http:end");
+        return result;
+      } catch (httpErr) {
+        setPreDebugStep("auth:fallback:http:error");
+        throw httpErr;
+      }
+    }
+    throw err;
+  }
 }
 
 async function loadBuildId() {
@@ -269,19 +320,41 @@ async function uploadDebugLogIfEnabled(type, payload = {}) {
 }
 
 function showLoadingBanner() {
-  if (!root || loadingBannerEl) return;
-  loadingBannerEl = el(`
-    <div id="boot-loading-banner" style="margin:8px 0;padding:10px 12px;border-radius:10px;background:#f5f6f8;color:#1f2937;font-weight:600;">
-      Loading...
-    </div>
-  `);
-  root.prepend(loadingBannerEl);
+  if (loadingBannerTimer) {
+    clearInterval(loadingBannerTimer);
+    loadingBannerTimer = null;
+  }
+  if (!root) return;
+  if (!loadingBannerEl) {
+    loadingBannerStartedAtMs = Date.now();
+    loadingBannerEl = el(`
+      <div id="boot-loading-banner" style="margin:8px 0;padding:12px 14px;border-radius:12px;background:#f8f6ef;color:#31423b;border:1px solid #e7dfd0;">
+        <div style="font-weight:700;">読み込み中… 少々お待ちください</div>
+        <div id="boot-loading-slow" style="margin-top:6px;font-size:13px;color:#6b746f;display:none;">読み込みに時間がかかっています…</div>
+        <div id="boot-loading-reopen" style="margin-top:4px;font-size:13px;color:#6b746f;display:none;">一度閉じて開き直してください</div>
+      </div>
+    `);
+    root.prepend(loadingBannerEl);
+  }
+  const slowEl = loadingBannerEl.querySelector("#boot-loading-slow");
+  const reopenEl = loadingBannerEl.querySelector("#boot-loading-reopen");
+  loadingBannerTimer = setInterval(() => {
+    if (!loadingBannerEl) return;
+    const elapsedSec = Math.floor((Date.now() - loadingBannerStartedAtMs) / 1000);
+    if (slowEl) slowEl.style.display = elapsedSec >= 5 ? "block" : "none";
+    if (reopenEl) reopenEl.style.display = elapsedSec >= 10 ? "block" : "none";
+  }, 500);
 }
 
 function hideLoadingBanner() {
+  if (loadingBannerTimer) {
+    clearInterval(loadingBannerTimer);
+    loadingBannerTimer = null;
+  }
   if (!loadingBannerEl) return;
   loadingBannerEl.remove();
   loadingBannerEl = null;
+  loadingBannerStartedAtMs = 0;
 }
 
 function renderFatalErrorPanel(phase, error) {
@@ -1880,8 +1953,10 @@ async function bootstrap() {
 
   phaseLog("AUTH");
   if (webMode) {
+    setPreDebugStep("auth:ensureAnonymousAuth:start");
     collectLiffDebug("webmode-anon-auth");
     await traceAsync("auth.ensureAnonymousAuth", () => ensureAnonymousAuth());
+    setPreDebugStep("auth:ensureAnonymousAuth:end");
   } else {
     const liffApi = window.liff;
     if (!liffApi || typeof liffApi.isLoggedIn !== "function") {
@@ -1892,16 +1967,22 @@ async function bootstrap() {
       liffApi.login({ redirectUri: location.href });
       return;
     }
+    setPreDebugStep("auth:liff:getIdToken:start");
     const idToken = typeof liffApi.getIDToken === "function" ? liffApi.getIDToken() : null;
+    setPreDebugStep("auth:liff:getIdToken:end");
     if (!idToken) {
       throw new Error("LIFF ID token is unavailable.");
     }
     collectLiffDebug("liff-exchange-token");
-    await traceAsync("callable.signInWithLineIdToken", () => signInWithLineIdToken(idToken, LIFF_ID.split("-")[0]));
+    setPreDebugStep("auth:liff:signInWithLineIdToken:start");
+    await traceAsync("callable.signInWithLineIdToken", () => callSignInWithRetry(idToken));
+    setPreDebugStep("auth:liff:signInWithLineIdToken:end");
   }
 
   phaseLog("AUTH_DONE");
+  setPreDebugStep("auth:waitAuth:start");
   const user = await traceAsync("auth.waitAuth", () => waitAuth());
+  setPreDebugStep("auth:waitAuth:end");
   stopPreDebugHud();
   collectLiffDebug("after-firebase-auth");
   await updateFirebaseAuthDebug(user);
