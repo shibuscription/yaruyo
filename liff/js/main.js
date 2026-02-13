@@ -53,6 +53,7 @@ const SETTINGS_DEBUG = params.get("debug") === "1";
 const DEBUG_QUERY_ENABLED = params.get("debug") === "1";
 const DEBUG_UIDS = [
   // Add allowed production debug UIDs here.
+  "Ufc376e023c7898e1d19b620f79cdf54c", // Example UID
 ];
 const DEBUG_HUD_COLLAPSED_KEY = "yaruyo_debug_hud_collapsed";
 const LIFF_ID = "2009111070-71hr5ID2";
@@ -63,6 +64,9 @@ let buildIdBadgeEl = null;
 let debugHudEl = null;
 let debugHudWatchdog = null;
 let debugHudNetworkBound = false;
+let preDebugHudEl = null;
+let preDebugHudTicker = null;
+let preDebugHudBound = false;
 
 const prodDebug = {
   requested: DEBUG_QUERY_ENABLED,
@@ -135,6 +139,8 @@ const globalState = window;
 let currentBootPhase = "BOOT";
 let loadingBannerEl = null;
 let globalErrorHandlersRegistered = false;
+let preDebugStartedAtMs = 0;
+let preDebugLastError = null;
 
 function extractErrorMeta(error) {
   if (error instanceof Error) {
@@ -159,6 +165,7 @@ function phaseLog(phase, detail = undefined) {
   currentBootPhase = phase;
   if (detail !== undefined) console.info(`[BOOT] ${phase}`, detail);
   else console.info(`[BOOT] ${phase}`);
+  renderPreDebugHud();
   if (prodDebug.enabled) {
     debugLog("phase", phase, detail ?? null);
   }
@@ -172,6 +179,65 @@ function ensureBuildIdBadge() {
   buildIdBadgeEl = el(`<div class="build-id-badge"></div>`);
   buildIdBadgeEl.textContent = `build: ${buildIdText || "unknown"}`;
   document.body.appendChild(buildIdBadgeEl);
+}
+
+function toShortErrorMessage(error) {
+  const raw = extractErrorMeta(error).message || "unknown";
+  return raw.length > 120 ? `${raw.slice(0, 117)}...` : raw;
+}
+
+function ensurePreDebugHud() {
+  if (!DEBUG_QUERY_ENABLED) return;
+  if (preDebugHudEl) return;
+  preDebugStartedAtMs = Date.now();
+  preDebugHudEl = el(`
+    <aside class="pre-debug-hud">
+      <div class="pre-debug-title">Pre-Debug</div>
+      <div id="pre-debug-body" class="pre-debug-body"></div>
+    </aside>
+  `);
+  document.body.appendChild(preDebugHudEl);
+  if (!preDebugHudTicker) {
+    preDebugHudTicker = setInterval(() => {
+      renderPreDebugHud();
+    }, 1000);
+  }
+  if (!preDebugHudBound) {
+    preDebugHudBound = true;
+    window.addEventListener("online", renderPreDebugHud);
+    window.addEventListener("offline", renderPreDebugHud);
+  }
+  renderPreDebugHud();
+}
+
+function stopPreDebugHud() {
+  if (preDebugHudTicker) {
+    clearInterval(preDebugHudTicker);
+    preDebugHudTicker = null;
+  }
+  if (preDebugHudEl) {
+    preDebugHudEl.remove();
+    preDebugHudEl = null;
+  }
+}
+
+function setPreDebugError(error) {
+  if (!DEBUG_QUERY_ENABLED) return;
+  preDebugLastError = toShortErrorMessage(error);
+  renderPreDebugHud();
+}
+
+function renderPreDebugHud() {
+  if (!DEBUG_QUERY_ENABLED || !preDebugHudEl || prodDebug.enabled) return;
+  const body = preDebugHudEl.querySelector("#pre-debug-body");
+  if (!body) return;
+  const elapsedSec = preDebugStartedAtMs ? Math.max(0, Math.floor((Date.now() - preDebugStartedAtMs) / 1000)) : 0;
+  body.innerHTML = [
+    `elapsed: ${elapsedSec}s`,
+    `phase: ${escapeHtml(currentBootPhase)}`,
+    `net: ${navigator.onLine ? "online" : "offline"}`,
+    `lastError: ${escapeHtml(preDebugLastError ?? "-")}`,
+  ].join("<br>");
 }
 
 async function loadBuildId() {
@@ -237,6 +303,7 @@ function registerGlobalErrorHandlers() {
   globalErrorHandlersRegistered = true;
   window.onerror = (message, source, lineno, colno, error) => {
     const err = error ?? new Error(`${message} (${source}:${lineno}:${colno})`);
+    setPreDebugError(err);
     phaseLog("WINDOW_ERROR", { message: String(message), source, lineno, colno });
     console.error("[BOOT] window.onerror", err);
     renderFatalErrorPanel(currentBootPhase, err);
@@ -250,6 +317,7 @@ function registerGlobalErrorHandlers() {
   };
   window.onunhandledrejection = (event) => {
     const reason = event?.reason ?? new Error("Unhandled rejection");
+    setPreDebugError(reason);
     phaseLog("UNHANDLED_REJECTION", {
       reason: reason instanceof Error ? reason.message : String(reason),
     });
@@ -334,6 +402,7 @@ function debugLog(category, message, meta = null) {
 function activateProdDebug(uid) {
   if (!debugAllowed(uid)) return;
   if (prodDebug.enabled) return;
+  stopPreDebugHud();
   prodDebug.enabled = true;
   prodDebug.uid = uid;
   prodDebug.collapsed = loadDebugHudCollapsed();
@@ -1833,6 +1902,7 @@ async function bootstrap() {
 
   phaseLog("AUTH_DONE");
   const user = await traceAsync("auth.waitAuth", () => waitAuth());
+  stopPreDebugHud();
   collectLiffDebug("after-firebase-auth");
   await updateFirebaseAuthDebug(user);
   if (!user) {
@@ -2766,10 +2836,12 @@ function bootstrapOnce() {
 if (shouldBoot) {
   ensureAvatarErrorHandler();
   loadBuildId();
+  ensurePreDebugHud();
   registerGlobalErrorHandlers();
   showLoadingBanner();
   bootstrapOnce().catch((e) => {
     phaseLog("BOOTSTRAP_FATAL", { message: e?.message ?? String(e) });
+    setPreDebugError(e);
     setDebugError(e);
     hideLoadingBanner();
     renderFatalErrorPanel(currentBootPhase, e);
