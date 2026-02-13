@@ -842,28 +842,41 @@ function toDateMaybe(value) {
 }
 
 function sortMembersByJoinedAtAsc(members) {
-  return [...members].sort((a, b) => {
-    const at = toDateMaybe(a?.joinedAt)?.getTime();
-    const bt = toDateMaybe(b?.joinedAt)?.getTime();
-    const aKey = Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
-    const bKey = Number.isFinite(bt) ? bt : Number.POSITIVE_INFINITY;
-    if (aKey !== bKey) return aKey - bKey;
-    return String(a?.userId ?? "").localeCompare(String(b?.userId ?? ""));
-  });
+  return members
+    .map((member, index) => ({ member, index }))
+    .sort((aWrap, bWrap) => {
+      const a = aWrap.member;
+      const b = bWrap.member;
+      // joinedAt が欠けるケースでは createdAt を使い、最後は入力順で安定化して逆転を防ぐ。
+      const at = toDateMaybe(a?.joinedAt)?.getTime() ?? toDateMaybe(a?.createdAt)?.getTime();
+      const bt = toDateMaybe(b?.joinedAt)?.getTime() ?? toDateMaybe(b?.createdAt)?.getTime();
+      const aKey = Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
+      const bKey = Number.isFinite(bt) ? bt : Number.POSITIVE_INFINITY;
+      if (aKey !== bKey) return aKey - bKey;
+      if (aWrap.index !== bWrap.index) return aWrap.index - bWrap.index;
+      return String(a?.userId ?? "").localeCompare(String(b?.userId ?? ""));
+    })
+    .map((wrapped) => wrapped.member);
 }
 
 function sortMembersByRoleThenJoinedAtAsc(members) {
   const roleRank = (role) => (role === "parent" ? 0 : role === "child" ? 1 : 2);
-  return [...members].sort((a, b) => {
-    const roleDiff = roleRank(a?.role) - roleRank(b?.role);
-    if (roleDiff !== 0) return roleDiff;
-    const at = toDateMaybe(a?.joinedAt)?.getTime();
-    const bt = toDateMaybe(b?.joinedAt)?.getTime();
-    const aKey = Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
-    const bKey = Number.isFinite(bt) ? bt : Number.POSITIVE_INFINITY;
-    if (aKey !== bKey) return aKey - bKey;
-    return String(a?.userId ?? "").localeCompare(String(b?.userId ?? ""));
-  });
+  return members
+    .map((member, index) => ({ member, index }))
+    .sort((aWrap, bWrap) => {
+      const a = aWrap.member;
+      const b = bWrap.member;
+      const roleDiff = roleRank(a?.role) - roleRank(b?.role);
+      if (roleDiff !== 0) return roleDiff;
+      const at = toDateMaybe(a?.joinedAt)?.getTime() ?? toDateMaybe(a?.createdAt)?.getTime();
+      const bt = toDateMaybe(b?.joinedAt)?.getTime() ?? toDateMaybe(b?.createdAt)?.getTime();
+      const aKey = Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
+      const bKey = Number.isFinite(bt) ? bt : Number.POSITIVE_INFINITY;
+      if (aKey !== bKey) return aKey - bKey;
+      if (aWrap.index !== bWrap.index) return aWrap.index - bWrap.index;
+      return String(a?.userId ?? "").localeCompare(String(b?.userId ?? ""));
+    })
+    .map((wrapped) => wrapped.member);
 }
 
 function formatDateTime(value) {

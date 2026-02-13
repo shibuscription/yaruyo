@@ -285,11 +285,13 @@ export async function listFamilyMembers(familyId) {
   const memberDocs = await getDocs(q);
   const members = await Promise.all(
     memberDocs.docs.map(async (m) => {
+      const memberData = m.data();
       const userSnap = await getDoc(doc(db, "users", m.id));
+      const userData = userSnap.exists() ? userSnap.data() : {};
       return {
         userId: m.id,
-        role: m.data().role,
-        ...(userSnap.exists() ? userSnap.data() : {}),
+        ...userData,
+        ...memberData,
       };
     }),
   );
