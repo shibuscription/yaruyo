@@ -833,6 +833,17 @@ function toDateMaybe(value) {
   return null;
 }
 
+function sortMembersByJoinedAtAsc(members) {
+  return [...members].sort((a, b) => {
+    const at = toDateMaybe(a?.joinedAt)?.getTime();
+    const bt = toDateMaybe(b?.joinedAt)?.getTime();
+    const aKey = Number.isFinite(at) ? at : Number.POSITIVE_INFINITY;
+    const bKey = Number.isFinite(bt) ? bt : Number.POSITIVE_INFINITY;
+    if (aKey !== bKey) return aKey - bKey;
+    return String(a?.userId ?? "").localeCompare(String(b?.userId ?? ""));
+  });
+}
+
 function formatDateTime(value) {
   const d = toDateMaybe(value);
   if (!d) return UI.placeholder;
@@ -1673,13 +1684,7 @@ function closeFamilyModal() {
 }
 
 function renderFamilyMemberRows(members, role) {
-  const rows = members
-    .filter((member) => member.role === role)
-    .sort((a, b) => {
-      const at = toDateMaybe(a.joinedAt)?.getTime() ?? 0;
-      const bt = toDateMaybe(b.joinedAt)?.getTime() ?? 0;
-      return at - bt;
-    })
+  const rows = sortMembersByJoinedAtAsc(members.filter((member) => member.role === role))
     .map((member) => {
       const uid = member.userId;
       const isMe = uid === auth.currentUser?.uid;
@@ -2790,10 +2795,11 @@ async function renderStats(panel) {
   const userMap = new Map(members.map((m) => [m.userId, m]));
   userMap.set(state.me.uid, { ...state.me, userId: state.me.uid });
 
-  const myMember = members.find((m) => m.userId === auth.currentUser.uid);
+  const sortedMembers = sortMembersByJoinedAtAsc(members);
+  const myMember = sortedMembers.find((m) => m.userId === auth.currentUser.uid);
   const isParent = myMember?.role === "parent";
   const memberOptions = [`<option value="all">全員</option>`]
-    .concat(members.map((m) => `<option value="${m.userId}">${getEffectiveDisplayName(m, m.userId)}</option>`))
+    .concat(sortedMembers.map((m) => `<option value="${m.userId}">${getEffectiveDisplayName(m, m.userId)}</option>`))
     .join("");
 
   let plans;
