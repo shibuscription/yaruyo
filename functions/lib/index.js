@@ -9,6 +9,7 @@ import { updateFamilyName } from "./callables/updateFamilyName.js";
 import { exchangeLineIdToken } from "./callables/exchangeLineIdToken.js";
 import { listMyReactionsForTargets, toggleReactionLike } from "./callables/reactions.js";
 import { exchangeLineIdTokenHttp } from "./http/exchangeLineIdTokenHttp.js";
+import { lineWebhook } from "./http/lineWebhook.js";
 import { reminderScheduler } from "./jobs/reminderScheduler.js";
 ensureAdminApp();
-export { createFamily, joinFamilyByCode, declarePlan, recordPlan, leaveFamily, closeFamily, updateFamilyName, exchangeLineIdToken, toggleReactionLike, listMyReactionsForTargets, exchangeLineIdTokenHttp, reminderScheduler, };
+export { createFamily, joinFamilyByCode, declarePlan, recordPlan, leaveFamily, closeFamily, updateFamilyName, exchangeLineIdToken, toggleReactionLike, listMyReactionsForTargets, exchangeLineIdTokenHttp, lineWebhook, reminderScheduler, };
