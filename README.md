@@ -160,6 +160,19 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
     -   [削除] は confirm 後に論理削除（`status=cancelled`, `cancelledAt`）
     -   削除UIは Optimistic（先にカードを消し、失敗時は復元）
 
+### 🟢 LINE Bot共有（確認して送信）
+
+-   Botトークで受けたテキストは即時配信せず、確認を返す
+    -   「家族全員におくる？」
+    -   ボタン: 「おくる」/「やめる」
+-   「おくる」時のみ同一家族の active メンバーへ配信（送信者本人は除外）
+    -   配信文: `表示名：本文`
+-   「やめる」時は配信しない
+-   非テキスト（スタンプ/画像等）は配信せず、テキスト入力を案内
+-   text は trim・空文字拒否・200文字上限（超過時は末尾 `…`）
+-   `familyId` が無い場合は家族登録を案内して終了
+-   `messageDrafts` を Functions(Admin SDK) で保存し、confirm/cancel は transaction で冪等制御
+
 ### 🟢 オンボーディング
 
 -   「家族を作成」「コードで参加」は実行前に確認ダイアログを表示
@@ -250,6 +263,7 @@ firebase deploy --only hosting\
 firebase deploy --only functions\
 firebase deploy --only functions:exchangeLineIdToken\
 firebase deploy --only functions:exchangeLineIdTokenHttp\
+firebase deploy --only functions:lineWebhook\
 firebase deploy --only firestore:rules\
 firebase deploy --only firestore:indexes
 
