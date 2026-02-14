@@ -3,4 +3,5 @@ export const state = {
   familyId: null,
   role: null,
   memberFilter: "all",
+  statsActiveTab: "completed",
 };

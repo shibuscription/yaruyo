@@ -11,6 +11,7 @@
   closeFamily as closeFamilyCallable,
   leaveFamily,
   listFamilyMembers,
+  listDeclaredPlansPage,
   listInviteCodes,
   listOpenPlansPage,
   listPlans,
@@ -2658,7 +2659,7 @@ function renderRecordForm(panel, plan) {
     try {
       await traceAsync("callable.recordPlan", () => recordPlan(plan.id, panel.querySelector("#result").value, memo));
       await showToast("やったよを記録しました");
-      await renderStats(panel);
+      navigateToView("stats");
     } catch (error) {
       console.error("recordPlan failed", error);
       await showToast(toUserErrorMessage(error));
@@ -2833,6 +2834,9 @@ async function renderStats(panel) {
   const sortedMembers = sortMembersByRoleThenJoinedAtAsc(members);
   const myMember = sortedMembers.find((m) => m.userId === auth.currentUser.uid);
   const isParent = myMember?.role === "parent";
+  let activeTab = state.statsActiveTab === "declared" || state.statsActiveTab === "completed"
+    ? state.statsActiveTab
+    : "completed";
   const memberOptions = [`<option value="all">全員</option>`]
     .concat(sortedMembers.map((m) => `<option value="${m.userId}">${getEffectiveDisplayName(m, m.userId)}</option>`))
     .join("");
@@ -2848,11 +2852,21 @@ async function renderStats(panel) {
 
   const node = el(`
     <div class="card">
-      ${panelTitleHtml(UI.statsTitle, { showGear: view !== "settings" })}
+      <div class="record-tabs" role="tablist" aria-label="きろくタブ">
+        <button type="button" class="record-tab-btn${activeTab === "declared" ? " active" : ""}" data-tab="declared">未完了のやるよ</button>
+        <button type="button" class="record-tab-btn${activeTab === "completed" ? " active" : ""}" data-tab="completed">過去のやったよ</button>
+      </div>
       ${isParent ? `<select id="memberFilter">${memberOptions}</select>` : ""}
-      <div id="stats-record-list" class="record-grid"></div>
-      <div id="stats-loading" class="muted" style="display:none;">読み込み中...</div>
-      <div id="stats-sentinel"></div>
+      <div id="stats-tab-declared" class="record-tab-panel${activeTab === "declared" ? " active" : ""}">
+        <div id="stats-record-list-declared" class="record-grid"></div>
+        <div id="stats-loading-declared" class="muted" style="display:none;">読み込み中...</div>
+        <div id="stats-sentinel-declared"></div>
+      </div>
+      <div id="stats-tab-completed" class="record-tab-panel${activeTab === "completed" ? " active" : ""}">
+        <div id="stats-record-list-completed" class="record-grid"></div>
+        <div id="stats-loading-completed" class="muted" style="display:none;">読み込み中...</div>
+        <div id="stats-sentinel-completed"></div>
+      </div>
     </div>
   `);
   panel.appendChild(node);
@@ -2865,15 +2879,6 @@ async function renderStats(panel) {
       await renderStats(panel);
     };
   }
-
-  const listEl = node.querySelector("#stats-record-list");
-  const loadingEl = node.querySelector("#stats-loading");
-  const sentinel = node.querySelector("#stats-sentinel");
-  const recordMap = new Map();
-  let cursor = null;
-  let hasMore = true;
-  let isLoading = false;
-  let totalLoaded = 0;
 
   const renderRecordCard = (record) => {
     const user = userMap.get(record.userId) || { userId: record.userId };
@@ -2898,41 +2903,99 @@ async function renderStats(panel) {
     `;
   };
 
-  const loadMore = async () => {
-    if (isLoading || !hasMore) return;
-    isLoading = true;
-    loadingEl.style.display = "block";
+  const renderDeclaredCard = (plan) => {
+    const user = userMap.get(plan.userId) || { userId: plan.userId };
+    const subjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectDisplay).join(", ") : UI.placeholder;
+    const memoPreview = plan.contentMemo ? `<div class="record-memo">${escapeHtml(String(plan.contentMemo))}</div>` : "";
+    return `
+      <button class="record-card" data-plan-id="${escapeHtml(plan.id)}">
+        <div class="record-head">
+          ${avatarHtml(user, "user")}
+          <div class="record-meta">
+            <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, plan.userId))}</div>
+            <div class="muted">${escapeHtml(subjects)}</div>
+            <div class="muted">やるよ：${escapeHtml(formatPlanStart(plan))}</div>
+            <div class="muted">作成：${escapeHtml(formatDateTime(plan.createdAt))}</div>
+          </div>
+        </div>
+        ${memoPreview}
+      </button>
+    `;
+  };
+
+  const tabState = {
+    declared: {
+      key: "declared",
+      listEl: node.querySelector("#stats-record-list-declared"),
+      loadingEl: node.querySelector("#stats-loading-declared"),
+      sentinel: node.querySelector("#stats-sentinel-declared"),
+      itemMap: new Map(),
+      cursor: null,
+      hasMore: true,
+      isLoading: false,
+      totalLoaded: 0,
+      emptyText: "まだ未完了のやるよがありません。",
+    },
+    completed: {
+      key: "completed",
+      listEl: node.querySelector("#stats-record-list-completed"),
+      loadingEl: node.querySelector("#stats-loading-completed"),
+      sentinel: node.querySelector("#stats-sentinel-completed"),
+      itemMap: new Map(),
+      cursor: null,
+      hasMore: true,
+      isLoading: false,
+      totalLoaded: 0,
+      emptyText: "まだ過去のやったよがありません。",
+    },
+  };
+
+  const loadMore = async (tabKey) => {
+    const current = tabState[tabKey];
+    if (!current || current.isLoading || !current.hasMore) return;
+    current.isLoading = true;
+    current.loadingEl.style.display = "block";
     try {
-      const page = await traceAsync("firestore.listRecordsPage", () => listRecordsPage({
-        familyId: state.familyId,
-        uid: auth.currentUser.uid,
-        isParent,
-        memberFilter: state.memberFilter,
-        limitCount: 20,
-        cursor,
-      }));
-      cursor = page.cursor;
-      hasMore = page.hasMore;
-      if (page.items.length === 0 && totalLoaded === 0) {
-        listEl.innerHTML = "<div class='muted'>まだ過去のやったよがありません。</div>";
+      let page;
+      if (tabKey === "completed") {
+        page = await traceAsync("firestore.listRecordsPage", () => listRecordsPage({
+          familyId: state.familyId,
+          uid: auth.currentUser.uid,
+          isParent,
+          memberFilter: state.memberFilter,
+          limitCount: 20,
+          cursor: current.cursor,
+        }));
       } else {
-        page.items.forEach((record) => {
-          recordMap.set(record.id, record);
-          listEl.insertAdjacentHTML("beforeend", renderRecordCard(record));
+        page = await traceAsync("firestore.listDeclaredPlansPage", () => listDeclaredPlansPage({
+          familyId: state.familyId,
+          memberFilter: isParent ? state.memberFilter : "all",
+          limitCount: 20,
+          cursor: current.cursor,
+        }));
+      }
+      current.cursor = page.cursor;
+      current.hasMore = page.hasMore;
+      if (page.items.length === 0 && current.totalLoaded === 0) {
+        current.listEl.innerHTML = `<div class='muted'>${current.emptyText}</div>`;
+      } else {
+        page.items.forEach((item) => {
+          current.itemMap.set(item.id, item);
+          current.listEl.insertAdjacentHTML("beforeend", tabKey === "completed" ? renderRecordCard(item) : renderDeclaredCard(item));
         });
-        totalLoaded += page.items.length;
+        current.totalLoaded += page.items.length;
       }
     } finally {
-      isLoading = false;
-      loadingEl.style.display = "none";
+      current.isLoading = false;
+      current.loadingEl.style.display = "none";
     }
   };
 
-  listEl.addEventListener("click", async (e) => {
+  tabState.completed.listEl.addEventListener("click", async (e) => {
     const card = e.target.closest(".record-card");
     if (!card) return;
     const recordId = card.dataset.recordId;
-    const record = recordMap.get(recordId);
+    const record = tabState.completed.itemMap.get(recordId);
     if (!record) return;
     const user = userMap.get(record.userId) || { userId: record.userId };
     const overlay = createRecordDetailModal(record, user);
@@ -2940,12 +3003,46 @@ async function renderStats(panel) {
     await fillPlanDetail(overlay, record);
   });
 
-  const observer = new IntersectionObserver((entries) => {
-    const hit = entries.some((entry) => entry.isIntersecting);
-    if (hit) loadMore();
+  tabState.declared.listEl.addEventListener("click", (e) => {
+    const card = e.target.closest(".record-card");
+    if (!card) return;
+    const planId = card.dataset.planId;
+    const plan = tabState.declared.itemMap.get(planId);
+    if (!plan) return;
+    const overlay = createPlanDetailModal(plan);
+    document.body.appendChild(overlay);
   });
-  observer.observe(sentinel);
-  await loadMore();
+
+  const switchTab = async (tabKey) => {
+    activeTab = tabKey;
+    state.statsActiveTab = tabKey;
+    node.querySelectorAll(".record-tab-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.tab === tabKey);
+    });
+    node.querySelector("#stats-tab-declared").classList.toggle("active", tabKey === "declared");
+    node.querySelector("#stats-tab-completed").classList.toggle("active", tabKey === "completed");
+    if (tabState[tabKey].totalLoaded === 0) {
+      await loadMore(tabKey);
+    }
+  };
+
+  node.querySelectorAll(".record-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await switchTab(btn.dataset.tab);
+    });
+  });
+
+  Object.values(tabState).forEach((current) => {
+    const observer = new IntersectionObserver((entries) => {
+      const hit = entries.some((entry) => entry.isIntersecting);
+      if (!hit) return;
+      if (activeTab !== current.key) return;
+      loadMore(current.key);
+    });
+    observer.observe(current.sentinel);
+  });
+
+  await switchTab(activeTab);
 }
 
 function bootstrapOnce() {

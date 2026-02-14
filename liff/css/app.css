@@ -375,9 +375,47 @@ button {
 .record-memo {
   margin-top: 8px;
   color: #556;
+}
+
+#stats-record-list-completed .record-memo {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.record-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+#stats-record-list-completed .record-card {
+  min-width: 0;
+}
+
+.record-tab-btn {
+  margin: 0;
+  flex: 1;
+  background: #f4f4f4;
+  color: #444;
+  border: 1px solid #ddd;
+}
+
+.record-tab-btn.active {
+  background: #ece8dc;
+  border-color: #d5ccb9;
+  color: #2c2a25;
+}
+
+.record-tab-panel {
+  display: none;
+}
+
+.record-tab-panel.active {
+  display: block;
 }
 
 .modal-overlay {

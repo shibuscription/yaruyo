@@ -256,6 +256,29 @@ export async function listRecordsPage({
   };
 }
 
+export async function listDeclaredPlansPage({
+  familyId,
+  memberFilter = "all",
+  limitCount = 20,
+  cursor = null,
+}) {
+  const filters = [where("familyId", "==", familyId)];
+  if (memberFilter !== "all") {
+    filters.push(where("userId", "==", memberFilter));
+  }
+  const constraints = [...filters, orderBy("createdAt", "desc"), limit(limitCount)];
+  if (cursor) constraints.push(startAfter(cursor));
+  const snap = await getDocs(query(collection(db, "plans"), ...constraints));
+  const docs = snap.docs;
+  return {
+    items: docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .filter((plan) => plan?.status === "declared" && !plan?.recordedAt && !plan?.cancelledAt),
+    cursor: docs.length > 0 ? docs[docs.length - 1] : null,
+    hasMore: docs.length === limitCount,
+  };
+}
+
 export async function listOpenPlansPage({
   familyId,
   uid,
