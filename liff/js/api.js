@@ -204,6 +204,14 @@ export async function recordPlan(planId, result, memo = null) {
   return (await httpsCallable(functions, "recordPlan")({ planId, result, memo })).data;
 }
 
+export async function toggleReactionLike(targetType, targetId) {
+  return (await httpsCallable(functions, "toggleReactionLike")({ targetType, targetId })).data;
+}
+
+export async function listMyReactionsForTargets(targetType, targetIds) {
+  return (await httpsCallable(functions, "listMyReactionsForTargets")({ targetType, targetIds })).data;
+}
+
 export async function leaveFamily() {
   return (await httpsCallable(functions, "leaveFamily")({})).data;
 }

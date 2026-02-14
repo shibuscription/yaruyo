@@ -15,6 +15,7 @@
   listInviteCodes,
   listOpenPlansPage,
   listPlans,
+  listMyReactionsForTargets,
   listRecordsPage,
   listRecords,
   recordPlan,
@@ -23,6 +24,7 @@
   subscribeMyUser,
   updateFamilyName,
   updateMySettings,
+  toggleReactionLike,
   upsertMyLineProfile,
   waitAuth,
   writeDebugLog,
@@ -2204,7 +2206,7 @@ async function renderDeclare(panel) {
   const openPlans = await getMyOpenPlans();
   const plansLinkHtml =
     openPlans.length > 0
-      ? `<button id="go-plans" type="button" class="link-btn">ほかのやるよ（${openPlans.length}）</button>`
+      ? `<button id="go-plans" type="button" class="link-btn">未完了のやるよ（${openPlans.length}）</button>`
       : "";
   const startOptions = buildStartTimeOptions().map((opt) => `<option value="${opt.value}">${opt.label}</option>`).join("");
   const subjectConfig = getEffectiveSubjectConfig();
@@ -2441,7 +2443,7 @@ async function renderSubjects(panel) {
 async function renderPlans(panel) {
   panel.innerHTML = `
     <div class="card">
-      ${panelTitleHtml("ほかのやるよ", { showGear: view !== "settings" })}
+      ${panelTitleHtml("未完了のやるよ", { showGear: view !== "settings" })}
       <button type="button" id="plans-back" class="secondary plans-back-btn">← 戻る</button>
       <div id="plans-list" class="plans-list"></div>
       <div id="plans-loading" class="muted" style="display:none;">読み込み中...</div>
@@ -2463,14 +2465,14 @@ async function renderPlans(panel) {
   let totalLoaded = 0;
 
   const updateTitle = () => {
-    titleEl.textContent = totalLoaded > 0 ? `ほかのやるよ（${totalLoaded}）` : "ほかのやるよ";
+    titleEl.textContent = totalLoaded > 0 ? `未完了のやるよ（${totalLoaded}）` : "未完了のやるよ";
   };
   const updateEmptyState = () => {
     if (totalLoaded === 0) {
-      listEl.innerHTML = `<div class="muted">ほかのやるよはありません</div>`;
+      listEl.innerHTML = `<div class="muted">未完了のやるよはありません</div>`;
     } else {
       const empty = listEl.querySelector(".muted");
-      if (empty && empty.textContent === "ほかのやるよはありません") {
+      if (empty && empty.textContent === "未完了のやるよはありません") {
         empty.remove();
       }
     }
@@ -2507,7 +2509,7 @@ async function renderPlans(panel) {
       cursor = page.cursor;
       hasMore = page.hasMore;
       if (page.items.length === 0 && totalLoaded === 0) {
-        listEl.innerHTML = `<div class="muted">ほかのやるよはありません</div>`;
+        listEl.innerHTML = `<div class="muted">未完了のやるよはありません</div>`;
       } else {
         page.items.forEach((plan) => {
           planMap.set(plan.id, plan);
@@ -2887,19 +2889,24 @@ async function renderStats(panel) {
     const planStart = formatPlanStart(plan);
     const memoPreview = record.memo ? `<div class="record-memo">${escapeHtml(String(record.memo))}</div>` : "";
     return `
-      <button class="record-card" data-record-id="${escapeHtml(record.id)}">
-        <div class="record-head">
-          ${avatarHtml(user, "user")}
-          <div class="record-meta">
-            <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, record.userId))}</div>
-            <div class="muted">${escapeHtml(planSubjects)}</div>
-            <div class="muted">やるよ：${escapeHtml(planStart)}</div>
-            <div class="muted">やったよ：${escapeHtml(formatDateTime(record.recordedAt || record.createdAt))}</div>
+      <div class="record-card-wrap">
+        <button class="record-card" data-record-id="${escapeHtml(record.id)}">
+          <div class="record-head">
+            ${avatarHtml(user, "user")}
+            <div class="record-meta">
+              <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, record.userId))}</div>
+              <div class="muted">${escapeHtml(planSubjects)}</div>
+              <div class="muted">やるよ：${escapeHtml(planStart)}</div>
+              <div class="muted">やったよ：${escapeHtml(formatDateTime(record.recordedAt || record.createdAt))}</div>
+            </div>
+            <span class="record-result">${escapeHtml(resultLabel(record.result))}</span>
           </div>
-          <span class="record-result">${escapeHtml(resultLabel(record.result))}</span>
+          ${memoPreview}
+        </button>
+        <div class="record-card-actions">
+          <button type="button" class="reaction-like-btn" data-target-type="record" data-target-id="${escapeHtml(record.id)}" aria-pressed="false">👍</button>
         </div>
-        ${memoPreview}
-      </button>
+      </div>
     `;
   };
 
@@ -2908,19 +2915,60 @@ async function renderStats(panel) {
     const subjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectDisplay).join(", ") : UI.placeholder;
     const memoPreview = plan.contentMemo ? `<div class="record-memo">${escapeHtml(String(plan.contentMemo))}</div>` : "";
     return `
-      <button class="record-card" data-plan-id="${escapeHtml(plan.id)}">
-        <div class="record-head">
-          ${avatarHtml(user, "user")}
-          <div class="record-meta">
-            <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, plan.userId))}</div>
-            <div class="muted">${escapeHtml(subjects)}</div>
-            <div class="muted">やるよ：${escapeHtml(formatPlanStart(plan))}</div>
-            <div class="muted">作成：${escapeHtml(formatDateTime(plan.createdAt))}</div>
+      <div class="record-card-wrap">
+        <button class="record-card" data-plan-id="${escapeHtml(plan.id)}">
+          <div class="record-head">
+            ${avatarHtml(user, "user")}
+            <div class="record-meta">
+              <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, plan.userId))}</div>
+              <div class="muted">${escapeHtml(subjects)}</div>
+              <div class="muted">やるよ：${escapeHtml(formatPlanStart(plan))}</div>
+              <div class="muted">作成：${escapeHtml(formatDateTime(plan.createdAt))}</div>
+            </div>
           </div>
+          ${memoPreview}
+        </button>
+        <div class="record-card-actions">
+          <button type="button" class="reaction-like-btn" data-target-type="plan" data-target-id="${escapeHtml(plan.id)}" aria-pressed="false">👍</button>
         </div>
-        ${memoPreview}
-      </button>
+      </div>
     `;
+  };
+
+  const chunkIds = (ids, size = 10) => {
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += size) {
+      chunks.push(ids.slice(i, i + size));
+    }
+    return chunks;
+  };
+
+  const setLikeButtonState = (tabKey, targetId, liked) => {
+    const current = tabState[tabKey];
+    if (!current) return;
+    const btn = current.listEl.querySelector(`.reaction-like-btn[data-target-id="${targetId}"]`);
+    if (!btn) return;
+    btn.classList.toggle("active", liked);
+    btn.setAttribute("aria-pressed", liked ? "true" : "false");
+  };
+
+  const applyLikedStateForPage = async (tabKey, targetType, targetIds) => {
+    if (!Array.isArray(targetIds) || targetIds.length === 0) return;
+    const current = tabState[tabKey];
+    const likedSet = new Set();
+    const uniqueTargetIds = Array.from(new Set(targetIds));
+    const chunks = chunkIds(uniqueTargetIds, 10);
+    for (const ids of chunks) {
+      const res = await traceAsync("callable.listMyReactionsForTargets", () => listMyReactionsForTargets(targetType, ids));
+      const likedIds = Array.isArray(res?.likedTargetIds) ? res.likedTargetIds : [];
+      likedIds.forEach((id) => likedSet.add(id));
+    }
+    uniqueTargetIds.forEach((targetId) => {
+      const liked = likedSet.has(targetId);
+      if (liked) current.likedTargetIds.add(targetId);
+      else current.likedTargetIds.delete(targetId);
+      setLikeButtonState(tabKey, targetId, liked);
+    });
   };
 
   const tabState = {
@@ -2933,6 +2981,7 @@ async function renderStats(panel) {
       cursor: null,
       hasMore: true,
       isLoading: false,
+      likedTargetIds: new Set(),
       totalLoaded: 0,
       emptyText: "まだ未完了のやるよがありません。",
     },
@@ -2945,6 +2994,7 @@ async function renderStats(panel) {
       cursor: null,
       hasMore: true,
       isLoading: false,
+      likedTargetIds: new Set(),
       totalLoaded: 0,
       emptyText: "まだ過去のやったよがありません。",
     },
@@ -2979,10 +3029,13 @@ async function renderStats(panel) {
       if (page.items.length === 0 && current.totalLoaded === 0) {
         current.listEl.innerHTML = `<div class='muted'>${current.emptyText}</div>`;
       } else {
+        const pageTargetIds = [];
         page.items.forEach((item) => {
           current.itemMap.set(item.id, item);
+          pageTargetIds.push(item.id);
           current.listEl.insertAdjacentHTML("beforeend", tabKey === "completed" ? renderRecordCard(item) : renderDeclaredCard(item));
         });
+        await applyLikedStateForPage(tabKey, tabKey === "completed" ? "record" : "plan", pageTargetIds);
         current.totalLoaded += page.items.length;
       }
     } finally {
@@ -2992,6 +3045,28 @@ async function renderStats(panel) {
   };
 
   tabState.completed.listEl.addEventListener("click", async (e) => {
+    const likeBtn = e.target.closest(".reaction-like-btn");
+    if (likeBtn) {
+      const targetId = likeBtn.dataset.targetId;
+      if (!targetId) return;
+      const tab = tabState.completed;
+      if (tab.likedTargetIds.has(targetId)) {
+        setLikeButtonState("completed", targetId, true);
+        return;
+      }
+      likeBtn.disabled = true;
+      try {
+        const result = await traceAsync("callable.toggleReactionLike", () => toggleReactionLike("record", targetId));
+        const liked = result?.liked === true;
+        if (liked) tab.likedTargetIds.add(targetId);
+        setLikeButtonState("completed", targetId, liked);
+      } catch (error) {
+        await showToast(toUserErrorMessage(error));
+      } finally {
+        likeBtn.disabled = false;
+      }
+      return;
+    }
     const card = e.target.closest(".record-card");
     if (!card) return;
     const recordId = card.dataset.recordId;
@@ -3003,7 +3078,28 @@ async function renderStats(panel) {
     await fillPlanDetail(overlay, record);
   });
 
-  tabState.declared.listEl.addEventListener("click", (e) => {
+  tabState.declared.listEl.addEventListener("click", async (e) => {
+    const likeBtn = e.target.closest(".reaction-like-btn");
+    if (likeBtn) {
+      const targetId = likeBtn.dataset.targetId;
+      if (!targetId) return;
+      if (tabState.declared.likedTargetIds.has(targetId)) {
+        setLikeButtonState("declared", targetId, true);
+        return;
+      }
+      likeBtn.disabled = true;
+      try {
+        const result = await traceAsync("callable.toggleReactionLike", () => toggleReactionLike("plan", targetId));
+        const liked = result?.liked === true;
+        if (liked) tabState.declared.likedTargetIds.add(targetId);
+        setLikeButtonState("declared", targetId, liked);
+      } catch (error) {
+        await showToast(toUserErrorMessage(error));
+      } finally {
+        likeBtn.disabled = false;
+      }
+      return;
+    }
     const card = e.target.closest(".record-card");
     if (!card) return;
     const planId = card.dataset.planId;
