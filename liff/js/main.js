@@ -2888,6 +2888,7 @@ async function renderStats(panel) {
     const planSubjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectDisplay).join(", ") : UI.placeholder;
     const planStart = formatPlanStart(plan);
     const memoPreview = record.memo ? `<div class="record-memo">${escapeHtml(String(record.memo))}</div>` : "";
+    const showLikeButton = record.userId !== auth.currentUser.uid;
     return `
       <div class="record-card-wrap">
         <button class="record-card" data-record-id="${escapeHtml(record.id)}">
@@ -2903,9 +2904,11 @@ async function renderStats(panel) {
           </div>
           ${memoPreview}
         </button>
+        ${showLikeButton ? `
         <div class="record-card-actions">
           <button type="button" class="reaction-like-btn" data-target-type="record" data-target-id="${escapeHtml(record.id)}" aria-pressed="false">👍</button>
         </div>
+        ` : ""}
       </div>
     `;
   };
@@ -2914,6 +2917,7 @@ async function renderStats(panel) {
     const user = userMap.get(plan.userId) || { userId: plan.userId };
     const subjects = Array.isArray(plan?.subjects) ? plan.subjects.map(subjectDisplay).join(", ") : UI.placeholder;
     const memoPreview = plan.contentMemo ? `<div class="record-memo">${escapeHtml(String(plan.contentMemo))}</div>` : "";
+    const showLikeButton = plan.userId !== auth.currentUser.uid;
     return `
       <div class="record-card-wrap">
         <button class="record-card" data-plan-id="${escapeHtml(plan.id)}">
@@ -2928,9 +2932,11 @@ async function renderStats(panel) {
           </div>
           ${memoPreview}
         </button>
+        ${showLikeButton ? `
         <div class="record-card-actions">
           <button type="button" class="reaction-like-btn" data-target-type="plan" data-target-id="${escapeHtml(plan.id)}" aria-pressed="false">👍</button>
         </div>
+        ` : ""}
       </div>
     `;
   };
