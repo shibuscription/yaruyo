@@ -1040,15 +1040,22 @@ function startUserSubscription(uid) {
     unsubscribeUser();
     unsubscribeUser = null;
   }
-  unsubscribeUser = subscribeMyUser(uid, (userDoc) => {
-    state.me = { uid, ...(userDoc ?? {}) };
-    state.familyId = userDoc?.familyId ?? state.familyId ?? null;
-    if (prodDebug.enabled) {
-      prodDebug.familyId = state.familyId ?? null;
-      debugLog("user", "subscribe update", { hasFamily: !!state.familyId });
-    }
-    refreshHeaderView();
-  });
+  unsubscribeUser = subscribeMyUser(
+    uid,
+    (userDoc) => {
+      state.me = { uid, ...(userDoc ?? {}) };
+      state.familyId = userDoc?.familyId ?? state.familyId ?? null;
+      if (prodDebug.enabled) {
+        prodDebug.familyId = state.familyId ?? null;
+        debugLog("user", "subscribe update", { hasFamily: !!state.familyId });
+      }
+      refreshHeaderView();
+    },
+    (error) => {
+      console.error("subscribeMyUser failed", { uid, error });
+      showToast(`ユーザー情報の監視に失敗しました: ${toUserErrorMessage(error)}`, 1800);
+    },
+  );
 }
 
 async function getLiffProfileSafe() {
@@ -2828,14 +2835,13 @@ async function renderStats(panel) {
     members = await traceAsync("firestore.listFamilyMembers", () => listFamilyMembers(state.familyId));
   } catch (error) {
     console.error("Query failed: listFamilyMembers", { familyId: state.familyId, error });
-    throw error;
+    panel.innerHTML = `<div class="card"><div class="muted">${escapeHtml(toUserErrorMessage(error))}</div></div>`;
+    return;
   }
   const userMap = new Map(members.map((m) => [m.userId, m]));
   userMap.set(state.me.uid, { ...state.me, userId: state.me.uid });
 
   const sortedMembers = sortMembersByRoleThenJoinedAtAsc(members);
-  const myMember = sortedMembers.find((m) => m.userId === auth.currentUser.uid);
-  const isParent = myMember?.role === "parent";
   let activeTab = state.statsActiveTab === "declared" || state.statsActiveTab === "completed"
     ? state.statsActiveTab
     : "completed";
@@ -2845,10 +2851,11 @@ async function renderStats(panel) {
 
   let plans;
   try {
-    plans = await traceAsync("firestore.listPlans", () => listPlans(state.familyId, auth.currentUser.uid, isParent, 500));
+    plans = await traceAsync("firestore.listPlans", () => listPlans(state.familyId, auth.currentUser.uid, true, 500));
   } catch (error) {
-    console.error("Query failed: listPlans", { familyId: state.familyId, isParent, error });
-    throw error;
+    console.error("Query failed: listPlans", { familyId: state.familyId, error });
+    panel.innerHTML = `<div class="card"><div class="muted">${escapeHtml(toUserErrorMessage(error))}</div></div>`;
+    return;
   }
   const planMap = new Map(plans.map((p) => [p.id, p]));
 
@@ -2858,7 +2865,7 @@ async function renderStats(panel) {
         <button type="button" class="record-tab-btn${activeTab === "declared" ? " active" : ""}" data-tab="declared">未完了のやるよ</button>
         <button type="button" class="record-tab-btn${activeTab === "completed" ? " active" : ""}" data-tab="completed">過去のやったよ</button>
       </div>
-      ${isParent ? `<select id="memberFilter">${memberOptions}</select>` : ""}
+      <select id="memberFilter">${memberOptions}</select>
       <div id="stats-tab-declared" class="record-tab-panel${activeTab === "declared" ? " active" : ""}">
         <div id="stats-record-list-declared" class="record-grid"></div>
         <div id="stats-loading-declared" class="muted" style="display:none;">読み込み中...</div>
@@ -2874,13 +2881,11 @@ async function renderStats(panel) {
   panel.appendChild(node);
   bindPanelGear(node);
 
-  if (isParent) {
-    node.querySelector("#memberFilter").value = state.memberFilter;
-    node.querySelector("#memberFilter").onchange = async (e) => {
-      state.memberFilter = e.target.value;
-      await renderStats(panel);
-    };
-  }
+  node.querySelector("#memberFilter").value = state.memberFilter;
+  node.querySelector("#memberFilter").onchange = async (e) => {
+    state.memberFilter = e.target.value;
+    await renderStats(panel);
+  };
 
   const renderRecordCard = (record) => {
     const user = userMap.get(record.userId) || { userId: record.userId };
@@ -3016,8 +3021,6 @@ async function renderStats(panel) {
       if (tabKey === "completed") {
         page = await traceAsync("firestore.listRecordsPage", () => listRecordsPage({
           familyId: state.familyId,
-          uid: auth.currentUser.uid,
-          isParent,
           memberFilter: state.memberFilter,
           limitCount: 20,
           cursor: current.cursor,
@@ -3025,7 +3028,7 @@ async function renderStats(panel) {
       } else {
         page = await traceAsync("firestore.listDeclaredPlansPage", () => listDeclaredPlansPage({
           familyId: state.familyId,
-          memberFilter: isParent ? state.memberFilter : "all",
+          memberFilter: state.memberFilter,
           limitCount: 20,
           cursor: current.cursor,
         }));
@@ -3044,6 +3047,14 @@ async function renderStats(panel) {
         await applyLikedStateForPage(tabKey, tabKey === "completed" ? "record" : "plan", pageTargetIds);
         current.totalLoaded += page.items.length;
       }
+    } catch (error) {
+      console.error(`Query failed: ${tabKey}`, { familyId: state.familyId, memberFilter: state.memberFilter, error });
+      const message = toUserErrorMessage(error);
+      if (current.totalLoaded === 0) {
+        current.listEl.innerHTML = `<div class='muted'>${escapeHtml(message)}</div>`;
+      }
+      await showToast(message);
+      current.hasMore = false;
     } finally {
       current.isLoading = false;
       current.loadingEl.style.display = "none";

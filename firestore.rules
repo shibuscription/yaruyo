@@ -27,6 +27,12 @@ service cloud.firestore {
       return signedIn() && exists(memberDoc(familyId, request.auth.uid));
     }
 
+    function isActiveMember(familyId) {
+      return signedIn()
+        && exists(memberDoc(familyId, request.auth.uid))
+        && get(memberDoc(familyId, request.auth.uid)).data.status == "active";
+    }
+
     function myRole(familyId) {
       return get(memberDoc(familyId, request.auth.uid)).data.role;
     }
@@ -99,7 +105,7 @@ service cloud.firestore {
     }
 
     match /plans/{planId} {
-      allow read: if canReadScoped(resource.data.familyId, resource.data.userId);
+      allow read: if isActiveMember(resource.data.familyId);
       allow create: if false;
       allow update: if isSelf(resource.data.userId)
         && isMember(resource.data.familyId)
@@ -119,7 +125,7 @@ service cloud.firestore {
     }
 
     match /records/{planId} {
-      allow read: if canReadScoped(resource.data.familyId, resource.data.userId);
+      allow read: if isActiveMember(resource.data.familyId);
       allow create: if false;
       allow update, delete: if false;
     }

@@ -129,10 +129,18 @@ export async function getMyUser(uid) {
   return snap.exists() ? snap.data() : null;
 }
 
-export function subscribeMyUser(uid, callback) {
-  return onSnapshot(doc(db, "users", uid), (snap) => {
-    callback(snap.exists() ? snap.data() : null);
-  });
+export function subscribeMyUser(uid, callback, errorCallback = null) {
+  return onSnapshot(
+    doc(db, "users", uid),
+    (snap) => {
+      callback(snap.exists() ? snap.data() : null);
+    },
+    (error) => {
+      if (typeof errorCallback === "function") {
+        errorCallback(error);
+      }
+    },
+  );
 }
 
 export async function getPlanById(planId) {
@@ -233,9 +241,11 @@ export async function listPlans(familyId, uid, isParent, limitCount = 10) {
 }
 
 export async function listRecords(familyId, uid, isParent, memberFilter = "all", limitCount = 10) {
+  void uid;
+  void isParent;
   const filters = [where("familyId", "==", familyId)];
-  if (!isParent || memberFilter !== "all") {
-    filters.push(where("userId", "==", !isParent ? uid : memberFilter));
+  if (memberFilter !== "all") {
+    filters.push(where("userId", "==", memberFilter));
   }
   const q = query(collection(db, "records"), ...filters, orderBy("createdAt", "desc"), limit(limitCount));
   return (await getDocs(q)).docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -243,15 +253,13 @@ export async function listRecords(familyId, uid, isParent, memberFilter = "all",
 
 export async function listRecordsPage({
   familyId,
-  uid,
-  isParent,
   memberFilter = "all",
   limitCount = 20,
   cursor = null,
 }) {
   const filters = [where("familyId", "==", familyId)];
-  if (!isParent || memberFilter !== "all") {
-    filters.push(where("userId", "==", !isParent ? uid : memberFilter));
+  if (memberFilter !== "all") {
+    filters.push(where("userId", "==", memberFilter));
   }
   const constraints = [...filters, orderBy("createdAt", "desc"), limit(limitCount)];
   if (cursor) constraints.push(startAfter(cursor));
