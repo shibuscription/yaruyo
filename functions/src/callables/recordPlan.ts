@@ -135,6 +135,13 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
     const subjectText = subjects.length > 0 ? subjectsLabel(subjects) : "勉強";
     const resultJa =
       body.result === "light" ? "軽めに" : body.result === "as_planned" ? "予定どおり" : "多めに";
+    const baseMessage = `${actorDisplayName}が「${subjectText}」をやったよ！🏆\n（${resultJa}）`;
+    let finalMessage = baseMessage;
+    if (txResult.memo) {
+      const trimmed = txResult.memo.slice(0, 30);
+      const needsEllipsis = txResult.memo.length > 30;
+      finalMessage = `${baseMessage}\n${trimmed}${needsEllipsis ? "…" : ""}`;
+    }
 
     await notifyRecipients({
       familyId: txResult.familyId,
@@ -142,7 +149,7 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
       type: "activity_record",
       actorUserId: uid,
       recipientIds: recipients,
-      messageBuilder: () => `${actorDisplayName}が「${subjectText}」をやったよ！🏆\n（${resultJa}）`,
+      messageBuilder: () => finalMessage,
     });
 
     return {
