@@ -401,6 +401,12 @@ button {
   font-weight: 700;
 }
 
+.record-plan-trigger {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .record-result {
   font-size: 12px;
   border: 1px solid #c9d8d2;

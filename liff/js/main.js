@@ -2611,11 +2611,10 @@ async function renderPlans(panel) {
     const planId = item.dataset.planId;
     const plan = planId ? planMap.get(planId) : null;
     if (!plan) return;
-    const overlay = createPlanDetailModal(plan);
-    document.body.appendChild(overlay);
+    await openPlanDetailModal(plan, planId);
   });
 
-  listEl.addEventListener("keydown", (e) => {
+  listEl.addEventListener("keydown", async (e) => {
     const item = e.target.closest(".plan-item");
     if (!item) return;
     if (e.key !== "Enter" && e.key !== " ") return;
@@ -2623,8 +2622,7 @@ async function renderPlans(panel) {
     const planId = item.dataset.planId;
     const plan = planId ? planMap.get(planId) : null;
     if (!plan) return;
-    const overlay = createPlanDetailModal(plan);
-    document.body.appendChild(overlay);
+    await openPlanDetailModal(plan, planId);
   });
 
   const observer = new IntersectionObserver((entries) => {
@@ -2647,7 +2645,7 @@ function renderRecordForm(panel, plan) {
   panel.innerHTML = `
     <div class="card">
       ${panelTitleHtml(UI.recordTitle, { showGear: view !== "settings" })}
-      <div class="muted">${escapeHtml(summary.subjects)} ${escapeHtml(summary.when)}</div>
+      <div class="muted"><span id="record-plan-trigger" class="record-plan-trigger">${escapeHtml(summary.subjects)} ${escapeHtml(summary.when)}</span></div>
       <select id="result">
         <option value="light">軽め</option>
         <option value="as_planned">予定通り</option>
@@ -2658,6 +2656,11 @@ function renderRecordForm(panel, plan) {
     </div>
   `;
   bindPanelGear(panel);
+  panel.querySelector("#record-plan-trigger").addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await openPlanDetailModal(plan, plan.id);
+  });
   panel.querySelector("#submit-record").onclick = async () => {
     const submitBtn = panel.querySelector("#submit-record");
     if (submitBtn.disabled) return;
@@ -2820,6 +2823,20 @@ function createPlanDetailModal(plan) {
   return overlay;
 }
 
+async function openPlanDetailModal(plan, planId = null) {
+  let detailPlan = plan ?? null;
+  if (!detailPlan && planId) {
+    try {
+      detailPlan = await traceAsync("firestore.getPlanById", () => getPlanById(planId));
+    } catch (error) {
+      await showToast(toUserErrorMessage(error));
+      return;
+    }
+  }
+  const overlay = createPlanDetailModal(detailPlan);
+  document.body.appendChild(overlay);
+}
+
 async function fillPlanDetail(overlay, record) {
   const loading = overlay.querySelector("#plan-detail-loading");
   const content = overlay.querySelector("#plan-detail-content");
@@ -2902,7 +2919,7 @@ async function renderStats(panel) {
             <div class="record-meta">
               <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, record.userId))}</div>
               <div class="muted">${escapeHtml(planSubjects)}</div>
-              <div class="muted">やるよ：${escapeHtml(planStart)}</div>
+              <div class="muted"><span class="record-plan-trigger" data-plan-id="${escapeHtml(record.planId || record.id)}">やるよ：${escapeHtml(planStart)}</span></div>
               <div class="muted">やったよ：${escapeHtml(formatDateTime(record.recordedAt || record.createdAt))}</div>
             </div>
             <span class="record-result">${escapeHtml(resultLabel(record.result))}</span>
@@ -3084,6 +3101,16 @@ async function renderStats(panel) {
       }
       return;
     }
+    const planTrigger = e.target.closest(".record-plan-trigger");
+    if (planTrigger) {
+      e.preventDefault();
+      e.stopPropagation();
+      const planId = planTrigger.dataset.planId;
+      if (!planId) return;
+      const plan = planMap.get(planId) ?? null;
+      await openPlanDetailModal(plan, planId);
+      return;
+    }
     const card = e.target.closest(".record-card");
     if (!card) return;
     const recordId = card.dataset.recordId;
@@ -3122,8 +3149,7 @@ async function renderStats(panel) {
     const planId = card.dataset.planId;
     const plan = tabState.declared.itemMap.get(planId);
     if (!plan) return;
-    const overlay = createPlanDetailModal(plan);
-    document.body.appendChild(overlay);
+    await openPlanDetailModal(plan, planId);
   });
 
   const switchTab = async (tabKey) => {
