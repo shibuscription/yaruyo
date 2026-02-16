@@ -21,6 +21,7 @@ type TxResult = {
   recordedAt: string;
   familyId: string;
   memo: string | null;
+  contentMemo?: string | null;
 };
 
 export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) => {
@@ -143,6 +144,7 @@ export const recordPlan = onCall({ region: "asia-northeast1" }, async (request) 
       finalMessage = `${baseMessage}\n${trimmed}${needsEllipsis ? "…" : ""}`;
     }
 
+    console.log("RECORD_MEMO_DEBUG", txResult.memo, txResult.contentMemo);
     await notifyRecipients({
       familyId: txResult.familyId,
       eventId: txResult.eventId,

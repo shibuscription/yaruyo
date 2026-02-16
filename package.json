@@ -2,7 +2,7 @@
   "scripts": {
     "buildid": "node scripts/genBuildId.js",
     "deploy:hosting": "node scripts/genBuildId.js && firebase deploy --only hosting && node scripts/createRichMenu.js",
-    "deploy:functions": "firebase deploy --only functions",
+    "deploy:functions": "npm --prefix functions run build && firebase deploy --only functions",
     "deploy:rules": "firebase deploy --only firestore:rules",
     "deploy:all": "node scripts/genBuildId.js && firebase deploy && node scripts/createRichMenu.js"
   },

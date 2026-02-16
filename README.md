@@ -290,6 +290,7 @@ npm scripts（推奨）:
 - `npm run deploy:functions`（Functionsのみ。buildIdは更新しない）
 - `npm run deploy:rules`（Rulesのみ。buildIdは更新しない）
 - `npm run deploy:all`（全体デプロイ + buildId更新 + RichMenu更新）
+※ Functions は TypeScript のため、必ず build を実行してからデプロイしてください（`npm run deploy:functions` は build を含む想定です）。
 
 ※ Functions の環境変数は `functions/.env`（ローカル）/ `functions/.env.<alias>`（本番）を使用（`functions.config()` は不使用）。
 

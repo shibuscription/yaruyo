@@ -82,15 +82,22 @@ export const declarePlan = onCall({ region: "asia-northeast1" }, async (request)
         const msg = startTime
             ? `${actorDisplayName}が${startTime}から「${subjectsText}」をやるよ ✏️`
             : `${actorDisplayName}が「${subjectsText}」をやるよ ✏️`;
+        let finalMsg = msg;
+        if (body.contentMemo) {
+            const trimmed = body.contentMemo.slice(0, 30);
+            const needsEllipsis = body.contentMemo.length > 30;
+            finalMsg = `${msg}\n${trimmed}${needsEllipsis ? "…" : ""}`;
+        }
         console.log("PLAN_NOTIFY_MESSAGE", msg, "subjects=", body.subjects, "startSlot=", startSlot);
         console.log("RECIPIENTS_CHECK", recipients);
+        console.log("DECLARE_MEMO_DEBUG", body.contentMemo, body.memo);
         await notifyRecipients({
             familyId,
             eventId,
             type: "activity_plan",
             actorUserId: uid,
             recipientIds: recipients,
-            messageBuilder: () => msg,
+            messageBuilder: () => finalMsg,
         });
         return {
             ok: true,
