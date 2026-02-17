@@ -273,24 +273,23 @@ function withDebugTimeout(promise, ms, label) {
 async function callSignInWithRetry(idToken) {
   const appId = LIFF_ID.split("-")[0];
   try {
-    return await withDebugTimeout(signInWithLineIdToken(idToken, appId), 15000, "signInWithLineIdToken");
-  } catch (err) {
-    const msg = err?.message ?? "";
-    if (typeof msg === "string" && msg.includes("timeout")) {
-      if (DEBUG_QUERY_ENABLED) {
-        console.warn("[RETRY] signInWithLineIdToken retrying once...");
-      }
-      setPreDebugStep("auth:fallback:http:start");
-      try {
-        const result = await signInWithLineIdTokenHttp(idToken, appId, 15000);
-        setPreDebugStep("auth:fallback:http:end");
-        return result;
-      } catch (httpErr) {
-        setPreDebugStep("auth:fallback:http:error");
-        throw httpErr;
-      }
+    setPreDebugStep("auth:primary:http:start");
+    const result = await withDebugTimeout(
+      signInWithLineIdTokenHttp(idToken, appId, 15000),
+      15000,
+      "http"
+    );
+    setPreDebugStep("auth:primary:http:success");
+    return result;
+  } catch (httpErr) {
+    if (DEBUG_QUERY_ENABLED) {
+      console.warn("[FALLBACK] exchangeLineIdTokenHttp failed. fallback to callable.", httpErr);
     }
-    throw err;
+    setPreDebugError(new Error("timeout:http"));
+    setPreDebugStep("auth:fallback:callable:start");
+    const result = await withDebugTimeout(signInWithLineIdToken(idToken, appId), 15000, "signInWithLineIdToken");
+    setPreDebugStep("auth:fallback:callable:success");
+    return result;
   }
 }
 
@@ -2024,9 +2023,7 @@ async function bootstrap() {
       throw new Error("LIFF ID token is unavailable.");
     }
     collectLiffDebug("liff-exchange-token");
-    setPreDebugStep("auth:liff:signInWithLineIdToken:start");
-    await traceAsync("callable.signInWithLineIdToken", () => callSignInWithRetry(idToken));
-    setPreDebugStep("auth:liff:signInWithLineIdToken:end");
+    await traceAsync("auth.exchangeLineIdToken", () => callSignInWithRetry(idToken));
   }
 
   phaseLog("AUTH_DONE");
