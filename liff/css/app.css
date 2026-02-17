@@ -451,6 +451,22 @@ button {
   margin-top: 0;
 }
 
+#stats-record-list-completed .record-card {
+  position: relative;
+  padding-right: 80px;
+}
+
+#stats-record-list-completed .record-result {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+#stats-record-list-completed .record-meta .muted:has(.record-plan-trigger),
+#stats-record-list-completed .record-meta .muted:last-child {
+  white-space: nowrap;
+}
+
 .record-tabs {
   display: flex;
   gap: 8px;
