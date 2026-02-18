@@ -47,7 +47,7 @@ function pickReminderSecondLine(): string {
 export const reminderScheduler = onSchedule(
   {
     region: "asia-northeast1",
-    schedule: "0,30 * * * *",
+    schedule: "*/5 * * * *",
     timeZone: "Asia/Tokyo",
   },
   async () => {

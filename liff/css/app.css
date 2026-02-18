@@ -168,6 +168,58 @@ button {
   gap: 8px;
 }
 
+.start-at-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: nowrap;
+  margin: 6px 0 10px;
+}
+
+.start-at-selects {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.start-at-select {
+  width: auto;
+  min-width: 64px;
+  box-sizing: border-box;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.start-at-select-minute {
+  min-width: 72px;
+}
+
+.start-at-colon {
+  font-weight: 700;
+  color: #445;
+}
+
+.start-at-select.is-disabled {
+  opacity: 0.6;
+}
+
+.start-at-undecided {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.start-at-undecided input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
 .muted {
   color: #667;
   font-size: 13px;
@@ -317,6 +369,10 @@ button {
   border-radius: 10px;
   padding: 10px;
   background: #fdfcf9;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .plan-main {
@@ -329,13 +385,59 @@ button {
   font-weight: 700;
 }
 
-.plan-item-actions {
-  display: flex;
-  gap: 8px;
+.plan-subjects {
+  font-weight: 700;
 }
 
-.plan-item-actions button {
+.plan-date-line {
+  line-height: 1.35;
+}
+
+.plan-footer {
+  display: flex;
+  align-items: center;
+  margin-top: 8px;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.plan-delete-btn {
+  margin-left: auto;
+  margin-right: 0;
+  margin-top: 0;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(209, 17, 17, 0.08);
+  border: 1px solid rgba(209, 17, 17, 0.35);
+  color: #d11;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plan-done-btn {
   margin: 0;
+}
+
+.plan-delete-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex: 0 0 auto;
+  fill: currentColor;
+}
+
+.plan-delete-label {
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .record-card {

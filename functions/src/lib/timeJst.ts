@@ -1,4 +1,4 @@
-export function roundTo30MinutesJst(iso: string): { roundedIso: string; startSlot: string } {
+export function roundTo5MinutesJst(iso: string): { roundedIso: string; startSlot: string } {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     throw new Error("Invalid startAt ISO format");
@@ -8,7 +8,7 @@ export function roundTo30MinutesJst(iso: string): { roundedIso: string; startSlo
   const jstTime = new Date(date.getTime() + jstOffsetMs);
 
   const minutes = jstTime.getUTCMinutes();
-  const floorMinutes = minutes < 30 ? 0 : 30;
+  const floorMinutes = Math.floor(minutes / 5) * 5;
   jstTime.setUTCMinutes(floorMinutes, 0, 0);
 
   const y = jstTime.getUTCFullYear();
@@ -23,7 +23,7 @@ export function roundTo30MinutesJst(iso: string): { roundedIso: string; startSlo
 }
 
 export function currentWindowSlotJst(now = new Date()): { windowSlot: string } {
-  const { startSlot } = roundTo30MinutesJst(now.toISOString());
+  const { startSlot } = roundTo5MinutesJst(now.toISOString());
   return { windowSlot: startSlot };
 }
 

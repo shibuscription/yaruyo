@@ -331,20 +331,44 @@ function showLoadingBanner() {
     loadingBannerStartedAtMs = Date.now();
     loadingBannerEl = el(`
       <div id="boot-loading-banner" style="margin:8px 0;padding:12px 14px;border-radius:12px;background:#f8f6ef;color:#31423b;border:1px solid #e7dfd0;">
-        <div style="font-weight:700;">読み込み中… 少々お待ちください</div>
-        <div id="boot-loading-slow" style="margin-top:6px;font-size:13px;color:#6b746f;display:none;">読み込みに時間がかかっています…</div>
-        <div id="boot-loading-reopen" style="margin-top:4px;font-size:13px;color:#6b746f;display:none;">一度閉じて開き直してください</div>
+        <div style="font-weight:700;">読み込み中です。少しだけお待ちください。</div>
+        <div id="boot-loading-slow" style="margin-top:6px;font-size:13px;color:#6b746f;display:none;">いつもより少し時間がかかっています…</div>
+        <div id="boot-loading-reopen" style="margin-top:4px;font-size:13px;color:#6b746f;display:none;">うまく表示できないときは、<br>いちど閉じてから、もう一度ひらいてみてください。</div>
+        <button type="button" id="boot-loading-close" style="margin-top:8px;display:none;">とじる</button>
       </div>
     `);
     root.prepend(loadingBannerEl);
   }
   const slowEl = loadingBannerEl.querySelector("#boot-loading-slow");
   const reopenEl = loadingBannerEl.querySelector("#boot-loading-reopen");
+  const closeBtn = loadingBannerEl.querySelector("#boot-loading-close");
+  if (closeBtn) {
+    closeBtn.onclick = () => {
+      const liffApi = window.liff;
+      if (!liffApi || typeof liffApi.closeWindow !== "function") return;
+      try {
+        liffApi.closeWindow();
+      } catch {
+        // noop
+      }
+    };
+  }
   loadingBannerTimer = setInterval(() => {
     if (!loadingBannerEl) return;
     const elapsedSec = Math.floor((Date.now() - loadingBannerStartedAtMs) / 1000);
     if (slowEl) slowEl.style.display = elapsedSec >= 5 ? "block" : "none";
-    if (reopenEl) reopenEl.style.display = elapsedSec >= 10 ? "block" : "none";
+    const showReopen = elapsedSec >= 10;
+    if (reopenEl) reopenEl.style.display = showReopen ? "block" : "none";
+    if (closeBtn) {
+      const liffApi = window.liff;
+      let isInClient = false;
+      try {
+        isInClient = !!(liffApi && typeof liffApi.isInClient === "function" && liffApi.isInClient());
+      } catch {
+        isInClient = false;
+      }
+      closeBtn.style.display = showReopen && isInClient ? "inline-block" : "none";
+    }
   }, 500);
 }
 
@@ -1298,31 +1322,51 @@ async function syncLiffProfile(uid) {
 const JST_OFFSET_MINUTES = 9 * 60;
 const JST_OFFSET_MS = JST_OFFSET_MINUTES * 60 * 1000;
 
-function buildStartTimeOptionsNowJst(now = new Date()) {
-  const result = [{ label: "未定", value: "" }];
-  const jstNow = new Date(now.getTime() + JST_OFFSET_MS);
+function jstDateFromNow(now = new Date()) {
+  return new Date(now.getTime() + JST_OFFSET_MS);
+}
+
+function ceilMinutesToStep(minutes, stepMinutes) {
+  return minutes % stepMinutes === 0 ? minutes : minutes + (stepMinutes - (minutes % stepMinutes));
+}
+
+function defaultStartTimeValueJst(now = new Date()) {
+  const jstNow = jstDateFromNow(now);
+  const minutesNow = jstNow.getUTCHours() * 60 + jstNow.getUTCMinutes();
+  const rounded = Math.min(ceilMinutesToStep(minutesNow, 5), 23 * 60 + 55);
+  const hh = String(Math.floor(rounded / 60)).padStart(2, "0");
+  const mm = String(rounded % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function isoFromJstTodayTimeValue(timeValue, now = new Date()) {
+  if (typeof timeValue !== "string" || !/^\d{2}:\d{2}$/.test(timeValue)) return null;
+  const [hhRaw, mmRaw] = timeValue.split(":");
+  const hh = Number(hhRaw);
+  const mm = Number(mmRaw);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  const jstNow = jstDateFromNow(now);
   const year = jstNow.getUTCFullYear();
   const month = jstNow.getUTCMonth();
   const day = jstNow.getUTCDate();
-  const minutesNow = jstNow.getUTCHours() * 60 + jstNow.getUTCMinutes();
-  const startMinutes = minutesNow % 30 === 0 ? minutesNow : minutesNow + (30 - (minutesNow % 30));
-  const lastMinutes = 23 * 60 + 30;
-
-  if (startMinutes > lastMinutes) {
-    return result;
-  }
-
-  for (let minutes = startMinutes; minutes <= lastMinutes; minutes += 30) {
-    const hh = String(Math.floor(minutes / 60)).padStart(2, "0");
-    const mm = String(minutes % 60).padStart(2, "0");
-    const utcMs = Date.UTC(year, month, day, Math.floor(minutes / 60), minutes % 60) - JST_OFFSET_MS;
-    result.push({ label: `${hh}:${mm}`, value: new Date(utcMs).toISOString() });
-  }
-  return result;
+  const utcMs = Date.UTC(year, month, day, hh, mm) - JST_OFFSET_MS;
+  return new Date(utcMs).toISOString();
 }
 
-function buildStartTimeOptions() {
-  return buildStartTimeOptionsNowJst();
+function splitStartTimeValue(timeValue) {
+  if (typeof timeValue !== "string" || !/^\d{2}:\d{2}$/.test(timeValue)) {
+    return { hour: "00", minute: "00" };
+  }
+  const [hour, minute] = timeValue.split(":");
+  return { hour, minute };
+}
+
+function composeStartTimeValue(hourValue, minuteValue) {
+  const hh = Number(hourValue);
+  const mm = Number(minuteValue);
+  if (!Number.isInteger(hh) || hh < 0 || hh > 23) return null;
+  if (!Number.isInteger(mm) || mm < 0 || mm > 59 || mm % 5 !== 0) return null;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
 function navigateToView(nextView) {
@@ -1429,6 +1473,39 @@ function showConfirmModal({
 
     overlay.querySelector("#confirm-cancel").onclick = () => close(false);
     overlay.querySelector("#confirm-ok").onclick = () => close(true);
+    document.body.appendChild(overlay);
+  });
+}
+
+function showAlertModal({
+  title = "確認",
+  message = "",
+  okText = "OK",
+} = {}) {
+  if (confirmModalOpen) {
+    return Promise.resolve();
+  }
+  confirmModalOpen = true;
+  return new Promise((resolve) => {
+    const overlay = el(`
+      <div class="modal-overlay confirm-overlay">
+        <div class="modal-card confirm-modal-card">
+          <div class="confirm-modal-body">
+            <h3 class="confirm-modal-title">${escapeHtml(title)}</h3>
+            <div class="confirm-modal-message">${escapeHtml(message)}</div>
+            <div class="confirm-modal-actions">
+              <button type="button" id="confirm-alert-ok">${escapeHtml(okText)}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `);
+    const close = () => {
+      confirmModalOpen = false;
+      overlay.remove();
+      resolve();
+    };
+    overlay.querySelector("#confirm-alert-ok").onclick = close;
     document.body.appendChild(overlay);
   });
 }
@@ -2212,7 +2289,16 @@ async function renderDeclare(panel) {
     openPlans.length > 0
       ? `<button id="go-plans" type="button" class="link-btn">未完了のやるよ（${openPlans.length}）</button>`
       : "";
-  const startOptions = buildStartTimeOptions().map((opt) => `<option value="${opt.value}">${opt.label}</option>`).join("");
+  const defaultStartTime = defaultStartTimeValueJst();
+  const minuteChoices = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
+  const defaultParts = splitStartTimeValue(defaultStartTime);
+  const hourOptions = Array.from({ length: 24 }, (_, i) => {
+    const value = String(i).padStart(2, "0");
+    return `<option value="${value}" ${value === defaultParts.hour ? "selected" : ""}>${value}</option>`;
+  }).join("");
+  const minuteOptions = minuteChoices
+    .map((value) => `<option value="${value}" ${value === defaultParts.minute ? "selected" : ""}>${value}</option>`)
+    .join("");
   const subjectConfig = getEffectiveSubjectConfig();
   const visibleCodes = subjectConfig.enabledSubjects.length > 0
     ? subjectConfig.enabledSubjects
@@ -2228,10 +2314,20 @@ async function renderDeclare(panel) {
   const amountValues = ['<option value="">-</option>'].concat(Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`)).join("");
 
   panel.innerHTML = `
-    <div class="card">
+      <div class="card">
       ${panelTitleHtml(UI.declareTitle, { showGear: view !== "settings", showSubjects: true })}
-      <label for="startAt">${UI.labelWhen}</label>
-      <select id="startAt">${startOptions}</select>
+      <label for="startAtHour">${UI.labelWhen}</label>
+      <div class="start-at-row">
+        <div class="start-at-selects">
+          <select id="startAtHour" class="start-at-select">${hourOptions}</select>
+          <span class="start-at-colon">:</span>
+          <select id="startAtMinute" class="start-at-select start-at-select-minute">${minuteOptions}</select>
+        </div>
+        <label for="startAtUndecided" class="start-at-undecided">
+          <span>未定</span>
+          <input id="startAtUndecided" type="checkbox" />
+        </label>
+      </div>
       <div>${UI.labelWhat}</div>
       <div class="subject-grid">${subjectButtons}</div>
       <div class="row amount-row">
@@ -2291,6 +2387,40 @@ async function renderDeclare(panel) {
   });
   setAmountType("time");
 
+  const startAtHourInput = panel.querySelector("#startAtHour");
+  const startAtMinuteInput = panel.querySelector("#startAtMinute");
+  const undecidedInput = panel.querySelector("#startAtUndecided");
+  const currentStartTimeValue = () => composeStartTimeValue(startAtHourInput.value, startAtMinuteInput.value);
+  const applyStartTimeValue = (value) => {
+    const next = splitStartTimeValue(value || defaultStartTime);
+    startAtHourInput.value = next.hour;
+    startAtMinuteInput.value = next.minute;
+  };
+  let lastSelectedStartTime = currentStartTimeValue() || defaultStartTime;
+  const onStartTimeChanged = () => {
+    if (!undecidedInput.checked) {
+      lastSelectedStartTime = currentStartTimeValue() || defaultStartTime;
+    }
+  };
+  startAtHourInput.addEventListener("change", onStartTimeChanged);
+  startAtMinuteInput.addEventListener("change", onStartTimeChanged);
+  const setUndecided = (isUndecided) => {
+    startAtHourInput.disabled = isUndecided;
+    startAtMinuteInput.disabled = isUndecided;
+    startAtHourInput.classList.toggle("is-disabled", isUndecided);
+    startAtMinuteInput.classList.toggle("is-disabled", isUndecided);
+  };
+  setUndecided(false);
+  undecidedInput.addEventListener("change", () => {
+    if (!undecidedInput.checked) {
+      applyStartTimeValue(lastSelectedStartTime || defaultStartTime);
+      setUndecided(false);
+      return;
+    }
+    lastSelectedStartTime = currentStartTimeValue() || defaultStartTime;
+    setUndecided(true);
+  });
+
   panel.querySelector("#submit-declare").onclick = async () => {
     const submitBtn = panel.querySelector("#submit-declare");
     if (submitBtn.disabled) return;
@@ -2304,8 +2434,8 @@ async function renderDeclare(panel) {
       submitBtn.textContent = original;
       return;
     }
-    const startAt = panel.querySelector("#startAt").value || null;
-    if (!startAt) {
+    const isUndecided = panel.querySelector("#startAtUndecided").checked;
+    if (isUndecided) {
       const ok = await showConfirmModal({
         title: "開始時刻が「未定」だけど、だいじょうぶ？",
         message: "開始時刻を決めずに作ります。あとから変更はできません。",
@@ -2313,6 +2443,27 @@ async function renderDeclare(panel) {
         cancelText: "選びなおす",
       });
       if (!ok) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = original;
+        return;
+      }
+    }
+    const selectedTimeValue = isUndecided ? null : currentStartTimeValue();
+    const startAt = isUndecided ? null : isoFromJstTodayTimeValue(selectedTimeValue);
+    if (!isUndecided && !startAt) {
+      await showToast("開始時刻を選択してください。");
+      submitBtn.disabled = false;
+      submitBtn.textContent = original;
+      return;
+    }
+    if (!isUndecided) {
+      const startAtMs = new Date(startAt).getTime();
+      if (Number.isFinite(startAtMs) && startAtMs < Date.now()) {
+        await showAlertModal({
+          title: "確認",
+          message: "その時間、もう過ぎちゃってるみたい。これからの時間を選んでね。",
+          okText: "選びなおす",
+        });
         submitBtn.disabled = false;
         submitBtn.textContent = original;
         return;
@@ -2484,16 +2635,20 @@ async function renderPlans(panel) {
 
   const renderPlanItem = (plan) => {
     const subjects = Array.isArray(plan.subjects) ? plan.subjects.map(subjectDisplay).join("・") : UI.placeholder;
-    const startTime = formatStartSlotTime(plan.startSlot);
     return `
       <div class="plan-item" data-plan-id="${escapeHtml(plan.id)}" role="button" tabindex="0">
         <div class="plan-main">
-          <div class="plan-time">${escapeHtml(startTime)}</div>
           <div class="plan-subjects">${escapeHtml(subjects)}</div>
+          ${planDateMetaHtml(plan)}
         </div>
-        <div class="plan-item-actions">
-          <button type="button" class="secondary plan-action-btn" data-action="record" data-plan-id="${escapeHtml(plan.id)}">やったよ</button>
-          <button type="button" class="secondary plan-action-btn" data-action="delete" data-plan-id="${escapeHtml(plan.id)}">削除</button>
+        <div class="plan-footer">
+          <button type="button" class="secondary plan-done-btn" data-action="record" data-plan-id="${escapeHtml(plan.id)}">やったよ</button>
+          <button type="button" class="plan-delete-btn" aria-label="削除" title="削除" data-action="delete" data-plan-id="${escapeHtml(plan.id)}">
+            <svg class="plan-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M9 3h6l1 2h4v2H4V5h4l1-2zm-2 6h10l-1 11H8L7 9zM10 11v7h2v-7h-2zm4 0v7h2v-7h-2z"/>
+            </svg>
+            <span class="plan-delete-label">削除</span>
+          </button>
         </div>
       </div>
     `;
@@ -2529,7 +2684,7 @@ async function renderPlans(panel) {
   };
 
   listEl.addEventListener("click", async (e) => {
-    const actionBtn = e.target.closest(".plan-action-btn");
+    const actionBtn = e.target.closest("button[data-action]");
     if (actionBtn) {
       e.preventDefault();
       e.stopPropagation();
@@ -2637,6 +2792,15 @@ function planSummary(plan) {
   return { subjects, when, created };
 }
 
+function planDateMetaHtml(plan, { startLabel = "開始", createdLabel = "作成" } = {}) {
+  const start = formatPlanStart(plan);
+  const created = formatDateTime(plan?.createdAt);
+  return `
+    <div class="muted plan-date-line">${escapeHtml(startLabel)}：${escapeHtml(start)}</div>
+    <div class="muted plan-date-line">${escapeHtml(createdLabel)}：${escapeHtml(created)}</div>
+  `;
+}
+
 function renderRecordForm(panel, plan) {
   const summary = planSummary(plan);
   panel.innerHTML = `
@@ -2722,7 +2886,7 @@ async function renderRecord(panel) {
         <div class="record-head">
           <div class="record-meta">
             <div class="record-name">${escapeHtml(s.subjects)}</div>
-            <div class="muted">開始: ${escapeHtml(s.when)} / 作成: ${escapeHtml(s.created)}</div>
+            ${planDateMetaHtml(plan)}
           </div>
         </div>
       </button>
@@ -2945,8 +3109,7 @@ async function renderStats(panel) {
             <div class="record-meta">
               <div class="record-name">${escapeHtml(getEffectiveDisplayName(user, plan.userId))}</div>
               <div class="muted">${escapeHtml(subjects)}</div>
-              <div class="muted">やるよ：${escapeHtml(formatPlanStart(plan))}</div>
-              <div class="muted">作成：${escapeHtml(formatDateTime(plan.createdAt))}</div>
+              ${planDateMetaHtml(plan)}
             </div>
           </div>
           ${memoPreview}
@@ -3085,14 +3248,15 @@ async function renderStats(panel) {
         setLikeButtonState("completed", targetId, true);
         return;
       }
+      tab.likedTargetIds.add(targetId);
+      setLikeButtonState("completed", targetId, true);
       likeBtn.disabled = true;
       try {
-        const result = await traceAsync("callable.toggleReactionLike", () => toggleReactionLike("record", targetId));
-        const liked = result?.liked === true;
-        if (liked) tab.likedTargetIds.add(targetId);
-        setLikeButtonState("completed", targetId, liked);
+        await traceAsync("callable.toggleReactionLike", () => toggleReactionLike("record", targetId));
       } catch (error) {
-        await showToast(toUserErrorMessage(error));
+        tab.likedTargetIds.delete(targetId);
+        setLikeButtonState("completed", targetId, false);
+        await showToast("通信に失敗しました");
       } finally {
         likeBtn.disabled = false;
       }
@@ -3128,14 +3292,15 @@ async function renderStats(panel) {
         setLikeButtonState("declared", targetId, true);
         return;
       }
+      tabState.declared.likedTargetIds.add(targetId);
+      setLikeButtonState("declared", targetId, true);
       likeBtn.disabled = true;
       try {
-        const result = await traceAsync("callable.toggleReactionLike", () => toggleReactionLike("plan", targetId));
-        const liked = result?.liked === true;
-        if (liked) tabState.declared.likedTargetIds.add(targetId);
-        setLikeButtonState("declared", targetId, liked);
+        await traceAsync("callable.toggleReactionLike", () => toggleReactionLike("plan", targetId));
       } catch (error) {
-        await showToast(toUserErrorMessage(error));
+        tabState.declared.likedTargetIds.delete(targetId);
+        setLikeButtonState("declared", targetId, false);
+        await showToast("通信に失敗しました");
       } finally {
         likeBtn.disabled = false;
       }

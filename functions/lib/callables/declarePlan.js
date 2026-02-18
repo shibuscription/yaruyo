@@ -6,7 +6,7 @@ import { ensureUserDoc } from "../lib/auth.js";
 import { eventDisplayName, getUserFamilyId } from "../lib/domain.js";
 import { notifyRecipients } from "../lib/notification.js";
 import { subjectsLabel } from "../lib/subjects.js";
-import { formatStartSlotTimeJst, roundTo30MinutesJst } from "../lib/timeJst.js";
+import { formatStartSlotTimeJst, roundTo5MinutesJst } from "../lib/timeJst.js";
 export const declarePlan = onCall({ region: "asia-northeast1" }, async (request) => {
     try {
         const uid = assertAuth(request.auth?.uid);
@@ -24,7 +24,7 @@ export const declarePlan = onCall({ region: "asia-northeast1" }, async (request)
         let startAtIso = null;
         let startSlot = null;
         if (body.startAt) {
-            const rounded = roundTo30MinutesJst(body.startAt);
+            const rounded = roundTo5MinutesJst(body.startAt);
             startAtIso = rounded.roundedIso;
             startSlot = rounded.startSlot;
         }
