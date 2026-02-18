@@ -456,6 +456,44 @@ button {
   margin-top: 6px;
 }
 
+.thumb-slot {
+  position: relative;
+  width: 40px;
+  min-width: 40px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumb-slot:not(.is-ready) {
+  pointer-events: none;
+}
+
+.thumb-slot:not(.is-ready) .reaction-like-btn {
+  visibility: hidden;
+}
+
+.thumb-slot.is-ready .thumb-spinner {
+  display: none;
+}
+
+.thumb-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #d5dae0;
+  border-top-color: #7a8795;
+  border-radius: 50%;
+  box-sizing: border-box;
+  animation: thumb-spin 0.8s linear infinite;
+}
+
+@keyframes thumb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .reaction-like-btn {
   margin: 0;
   padding: 4px 10px;

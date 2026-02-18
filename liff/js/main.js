@@ -3065,6 +3065,13 @@ async function renderStats(panel) {
     await renderStats(panel);
   };
 
+  const renderLikeControl = ({ targetType, targetId }) => `
+    <div class="thumb-slot" data-target-type="${escapeHtml(targetType)}" data-target-id="${escapeHtml(targetId)}">
+      <span class="thumb-spinner" aria-hidden="true"></span>
+      <button type="button" class="reaction-like-btn" data-target-type="${escapeHtml(targetType)}" data-target-id="${escapeHtml(targetId)}" aria-pressed="false">👍</button>
+    </div>
+  `;
+
   const renderRecordCard = (record) => {
     const user = userMap.get(record.userId) || { userId: record.userId };
     const plan = planMap.get(record.planId || record.id);
@@ -3089,7 +3096,7 @@ async function renderStats(panel) {
         </button>
         ${showLikeButton ? `
         <div class="record-card-actions">
-          <button type="button" class="reaction-like-btn" data-target-type="record" data-target-id="${escapeHtml(record.id)}" aria-pressed="false">👍</button>
+          ${renderLikeControl({ targetType: "record", targetId: record.id })}
         </div>
         ` : ""}
       </div>
@@ -3116,7 +3123,7 @@ async function renderStats(panel) {
         </button>
         ${showLikeButton ? `
         <div class="record-card-actions">
-          <button type="button" class="reaction-like-btn" data-target-type="plan" data-target-id="${escapeHtml(plan.id)}" aria-pressed="false">👍</button>
+          ${renderLikeControl({ targetType: "plan", targetId: plan.id })}
         </div>
         ` : ""}
       </div>
@@ -3140,23 +3147,37 @@ async function renderStats(panel) {
     btn.setAttribute("aria-pressed", liked ? "true" : "false");
   };
 
+  const setLikeReadyState = (tabKey, targetId, ready) => {
+    const current = tabState[tabKey];
+    if (!current) return;
+    const slot = current.listEl.querySelector(`.thumb-slot[data-target-id="${targetId}"]`);
+    if (!slot) return;
+    slot.classList.toggle("is-ready", ready);
+  };
+
   const applyLikedStateForPage = async (tabKey, targetType, targetIds) => {
     if (!Array.isArray(targetIds) || targetIds.length === 0) return;
     const current = tabState[tabKey];
     const likedSet = new Set();
     const uniqueTargetIds = Array.from(new Set(targetIds));
     const chunks = chunkIds(uniqueTargetIds, 10);
-    for (const ids of chunks) {
-      const res = await traceAsync("callable.listMyReactionsForTargets", () => listMyReactionsForTargets(targetType, ids));
-      const likedIds = Array.isArray(res?.likedTargetIds) ? res.likedTargetIds : [];
-      likedIds.forEach((id) => likedSet.add(id));
+    try {
+      for (const ids of chunks) {
+        const res = await traceAsync("callable.listMyReactionsForTargets", () => listMyReactionsForTargets(targetType, ids));
+        const likedIds = Array.isArray(res?.likedTargetIds) ? res.likedTargetIds : [];
+        likedIds.forEach((id) => likedSet.add(id));
+      }
+      uniqueTargetIds.forEach((targetId) => {
+        const liked = likedSet.has(targetId);
+        if (liked) current.likedTargetIds.add(targetId);
+        else current.likedTargetIds.delete(targetId);
+        setLikeButtonState(tabKey, targetId, liked);
+      });
+    } finally {
+      uniqueTargetIds.forEach((targetId) => {
+        setLikeReadyState(tabKey, targetId, true);
+      });
     }
-    uniqueTargetIds.forEach((targetId) => {
-      const liked = likedSet.has(targetId);
-      if (liked) current.likedTargetIds.add(targetId);
-      else current.likedTargetIds.delete(targetId);
-      setLikeButtonState(tabKey, targetId, liked);
-    });
   };
 
   const tabState = {
