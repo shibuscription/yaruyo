@@ -52,7 +52,7 @@ const root = document.getElementById("app-root");
 const params = new URLSearchParams(location.search);
 const rawView = params.get("view");
 const mappedView = rawView === "yaruyo" ? "declare" : rawView;
-const view = ["declare", "record", "stats", "settings", "plans", "subjects"].includes(mappedView) ? mappedView : null;
+const view = ["declare", "record", "stats", "calendar", "settings", "plans", "subjects"].includes(mappedView) ? mappedView : null;
 const SETTINGS_DEBUG = params.get("debug") === "1";
 const DEBUG_QUERY_ENABLED = params.get("debug") === "1";
 const DEBUG_UIDS = [
@@ -919,6 +919,42 @@ function formatDateTime(value) {
   }).formatToParts(d);
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
   return `${map.year}/${map.month}/${map.day} ${map.hour}:${map.minute}`;
+}
+
+function jstDayKey(value) {
+  const d = toDateMaybe(value);
+  if (!d) return null;
+  const jst = new Date(d.getTime() + JST_OFFSET_MS);
+  const y = String(jst.getUTCFullYear());
+  const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(jst.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function currentJstYearMonth(now = new Date()) {
+  const jst = new Date(now.getTime() + JST_OFFSET_MS);
+  return {
+    year: jst.getUTCFullYear(),
+    month: jst.getUTCMonth() + 1,
+  };
+}
+
+function buildMonthDayCellsJst(year, month) {
+  const firstDateJst = new Date(Date.UTC(year, month - 1, 1));
+  const firstDay = firstDateJst.getUTCDay();
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const cells = [];
+  for (let i = 0; i < firstDay; i += 1) {
+    cells.push({ type: "empty" });
+  }
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    cells.push({ type: "day", day, key });
+  }
+  while (cells.length % 7 !== 0) {
+    cells.push({ type: "empty" });
+  }
+  return cells;
 }
 
 function formatStartSlot(slot) {
@@ -2276,7 +2312,7 @@ async function renderHome() {
     return;
   }
   if (view === "record") await renderRecord(currentPanel);
-  else if (view === "stats") await renderStats(currentPanel);
+  else if (view === "stats" || view === "calendar") await renderStats(currentPanel);
   else if (view === "settings") renderSettingsPage(currentPanel);
   else if (view === "subjects") await renderSubjects(currentPanel);
   else if (view === "plans") await renderPlans(currentPanel);
@@ -3020,9 +3056,9 @@ async function renderStats(panel) {
   userMap.set(state.me.uid, { ...state.me, userId: state.me.uid });
 
   const sortedMembers = sortMembersByRoleThenJoinedAtAsc(members);
-  let activeTab = state.statsActiveTab === "declared" || state.statsActiveTab === "completed"
-    ? state.statsActiveTab
-    : "completed";
+  let activeTab = view === "calendar"
+    ? "calendar"
+    : (state.statsActiveTab === "declared" || state.statsActiveTab === "completed" ? state.statsActiveTab : "completed");
   const memberOptions = [`<option value="all">全員</option>`]
     .concat(sortedMembers.map((m) => `<option value="${m.userId}">${getEffectiveDisplayName(m, m.userId)}</option>`))
     .join("");
@@ -3042,6 +3078,7 @@ async function renderStats(panel) {
       <div class="record-tabs" role="tablist" aria-label="きろくタブ">
         <button type="button" class="record-tab-btn${activeTab === "declared" ? " active" : ""}" data-tab="declared">未完了のやるよ</button>
         <button type="button" class="record-tab-btn${activeTab === "completed" ? " active" : ""}" data-tab="completed">過去のやったよ</button>
+        <button type="button" class="record-tab-btn record-tab-btn-calendar${activeTab === "calendar" ? " active" : ""}" data-tab="calendar" title="カレンダー" aria-label="カレンダー">🗓️</button>
       </div>
       <select id="memberFilter">${memberOptions}</select>
       <div id="stats-tab-declared" class="record-tab-panel${activeTab === "declared" ? " active" : ""}">
@@ -3053,6 +3090,10 @@ async function renderStats(panel) {
         <div id="stats-record-list-completed" class="record-grid"></div>
         <div id="stats-loading-completed" class="muted" style="display:none;">読み込み中...</div>
         <div id="stats-sentinel-completed"></div>
+      </div>
+      <div id="stats-tab-calendar" class="record-tab-panel${activeTab === "calendar" ? " active" : ""}">
+        <div id="stats-calendar-content" class="calendar-panel"></div>
+        <div id="stats-loading-calendar" class="muted" style="display:none;">読み込み中...</div>
       </div>
     </div>
   `);
@@ -3209,6 +3250,100 @@ async function renderStats(panel) {
     },
   };
 
+  const calendarState = {
+    loaded: false,
+    loading: false,
+    year: currentJstYearMonth().year,
+    month: currentJstYearMonth().month,
+    countByDay: new Map(),
+  };
+
+  const renderCalendar = () => {
+    const contentEl = node.querySelector("#stats-calendar-content");
+    if (!contentEl) return;
+    if (!calendarState.loaded && !calendarState.loading) {
+      contentEl.innerHTML = `<div class="muted">カレンダーを読み込みます。</div>`;
+      return;
+    }
+    const { year, month, countByDay } = calendarState;
+    const monthText = `${year}年${String(month).padStart(2, "0")}月`;
+    const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
+    const dayCells = buildMonthDayCellsJst(year, month);
+    const totalDoneCount = Array.from(countByDay.values()).reduce((acc, n) => acc + n, 0);
+    contentEl.innerHTML = `
+      <div class="calendar-month-title">${monthText}</div>
+      <div class="calendar-weekdays">${weekdays.map((w) => `<div class="calendar-weekday">${w}</div>`).join("")}</div>
+      <div class="calendar-days">
+        ${dayCells.map((cell) => {
+          if (cell.type === "empty") {
+            return `<div class="calendar-day calendar-day-empty"></div>`;
+          }
+          const count = countByDay.get(cell.key) ?? 0;
+          return `
+            <div class="calendar-day${count > 0 ? " has-stamp" : ""}">
+              <span class="calendar-day-num">${cell.day}</span>
+              ${count > 0 ? `<span class="calendar-day-stamp" aria-hidden="true">🌸</span>` : ""}
+            </div>
+          `;
+        }).join("")}
+      </div>
+      <div class="muted calendar-summary">当月のやったよ: ${totalDoneCount}件</div>
+    `;
+  };
+
+  const loadCalendar = async () => {
+    if (calendarState.loading || calendarState.loaded) return;
+    calendarState.loading = true;
+    const loadingEl = node.querySelector("#stats-loading-calendar");
+    if (loadingEl) loadingEl.style.display = "block";
+    try {
+      const { year, month } = calendarState;
+      const monthPrefix = `${year}-${String(month).padStart(2, "0")}-`;
+      const monthStartKey = `${monthPrefix}01`;
+      const countByDay = new Map();
+      let cursor = null;
+      let hasMore = true;
+      let pageCount = 0;
+      const maxPages = 24;
+
+      while (hasMore && pageCount < maxPages) {
+        const page = await traceAsync("firestore.listRecordsPage.calendar", () => listRecordsPage({
+          familyId: state.familyId,
+          memberFilter: state.memberFilter,
+          limitCount: 50,
+          cursor,
+        }));
+        cursor = page.cursor;
+        hasMore = page.hasMore;
+        pageCount += 1;
+
+        let reachedOlderMonth = false;
+        for (const record of page.items) {
+          const dayKey = jstDayKey(record.recordedAt || record.createdAt);
+          if (!dayKey) continue;
+          if (dayKey.startsWith(monthPrefix)) {
+            countByDay.set(dayKey, (countByDay.get(dayKey) ?? 0) + 1);
+          } else if (dayKey < monthStartKey) {
+            reachedOlderMonth = true;
+          }
+        }
+        if (reachedOlderMonth) break;
+      }
+
+      calendarState.countByDay = countByDay;
+      calendarState.loaded = true;
+      renderCalendar();
+    } catch (error) {
+      const contentEl = node.querySelector("#stats-calendar-content");
+      if (contentEl) {
+        contentEl.innerHTML = `<div class="muted">${escapeHtml(toUserErrorMessage(error))}</div>`;
+      }
+    } finally {
+      calendarState.loading = false;
+      if (loadingEl) loadingEl.style.display = "none";
+    }
+  };
+
   const loadMore = async (tabKey) => {
     const current = tabState[tabKey];
     if (!current || current.isLoading || !current.hasMore) return;
@@ -3343,6 +3478,14 @@ async function renderStats(panel) {
     });
     node.querySelector("#stats-tab-declared").classList.toggle("active", tabKey === "declared");
     node.querySelector("#stats-tab-completed").classList.toggle("active", tabKey === "completed");
+    node.querySelector("#stats-tab-calendar").classList.toggle("active", tabKey === "calendar");
+    if (tabKey === "calendar") {
+      renderCalendar();
+      if (!calendarState.loaded) {
+        await loadCalendar();
+      }
+      return;
+    }
     if (tabState[tabKey].totalLoaded === 0) {
       await loadMore(tabKey);
     }
@@ -3350,7 +3493,22 @@ async function renderStats(panel) {
 
   node.querySelectorAll(".record-tab-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      await switchTab(btn.dataset.tab);
+      const targetTab = btn.dataset.tab;
+      if (targetTab === "calendar") {
+        state.statsActiveTab = "calendar";
+        if (view !== "calendar") {
+          navigateToView("calendar");
+          return;
+        }
+        await switchTab("calendar");
+        return;
+      }
+      state.statsActiveTab = targetTab;
+      if (view === "calendar") {
+        navigateToView("stats");
+        return;
+      }
+      await switchTab(targetTab);
     });
   });
 

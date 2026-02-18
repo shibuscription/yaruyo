@@ -619,6 +619,14 @@ button {
   background: #f4f4f4;
   color: #444;
   border: 1px solid #ddd;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.record-tab-btn-calendar {
+  flex: 0 0 42px;
+  width: 42px;
+  padding: 0;
 }
 
 .record-tab-btn.active {
@@ -633,6 +641,60 @@ button {
 
 .record-tab-panel.active {
   display: block;
+}
+
+.calendar-panel {
+  margin-top: 4px;
+}
+
+.calendar-month-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.calendar-weekdays,
+.calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 12px;
+  color: #6d756f;
+}
+
+.calendar-day {
+  min-height: 40px;
+  border: 1px solid #ece7db;
+  border-radius: 8px;
+  background: #faf8f2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.calendar-day-empty {
+  border: none;
+  background: transparent;
+}
+
+.calendar-day-num {
+  font-size: 12px;
+  line-height: 1.1;
+}
+
+.calendar-day-stamp {
+  font-size: 12px;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+
+.calendar-summary {
+  margin-top: 8px;
 }
 
 .modal-overlay {

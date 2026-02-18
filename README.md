@@ -81,6 +81,7 @@ Running in emulator mode. Do not use with production credentials.
 ?view=declare\
 ?view=record\
 ?view=stats\
+?view=calendar\
 ?view=plans\
 ?view=settings\
 ?view=subjects
@@ -167,6 +168,7 @@ LIFF内起動時は profile（displayName / pictureUrl）を users に同期。
     -   同一ユーザー/同一対象は1回のみ（取り消しなし）
     -   初回👍のみ対象本人へ通知（重複は dedupe で抑止）
     -   初回表示時はスピナーを表示し、状態確定後に👍を表示（初期チラつき防止・レイアウト固定）
+    -   タブ右端の📅から `view=calendar` へ遷移し、当月の「やったよ」日をスタンプで表示
 
 ### 🟢 未完了のやるよ（view=plans）
 
