@@ -4,7 +4,7 @@ import { db, SERVER_TIMESTAMP } from "../lib/firestore.js";
 import { logDocIdFromDedupeKey, sendLinePush, writeNotificationLogIdempotent } from "../lib/notification.js";
 import { subjectsLabel } from "../lib/subjects.js";
 import { formatStartSlotTimeJst, startSlotRangeWithBufferJst } from "../lib/timeJst.js";
-const BUFFER_MINUTES = 5;
+const BUFFER_MINUTES = 3;
 function subjectText(plan) {
     if (typeof plan.subject === "string" && plan.subject.length > 0) {
         return plan.subject;

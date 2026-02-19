@@ -5,7 +5,7 @@ import { logDocIdFromDedupeKey, sendLinePush, writeNotificationLogIdempotent } f
 import { subjectsLabel } from "../lib/subjects.js";
 import { formatStartSlotTimeJst, startSlotRangeWithBufferJst } from "../lib/timeJst.js";
 
-const BUFFER_MINUTES = 5;
+const BUFFER_MINUTES = 3;
 
 function subjectText(plan: FirebaseFirestore.DocumentData): string {
   if (typeof plan.subject === "string" && plan.subject.length > 0) {
